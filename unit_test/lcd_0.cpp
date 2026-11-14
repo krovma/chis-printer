@@ -1,7 +1,5 @@
 #include "unit_test/lcd_0.h"
 
-#include <array>
-#include <cstddef>
 #include <cstdio>
 #include <cstdint>
 
@@ -13,9 +11,7 @@
 namespace unit_test::lcd_0 {
 namespace {
 
-constexpr std::array<uint8_t, 6> BACKLIGHT_LEVELS{10, 25, 50, 75, 88, 100};
-
-constexpr uint32_t BACKLIGHT_STEP_MS     = 500;
+constexpr uint32_t PALETTE_STEP_MS       = 1200;
 constexpr uint32_t FRAME_STEP_MS         = 50;
 constexpr uint16_t MIN_RADIUS            = 8;
 constexpr uint16_t MAX_RADIUS            = 72;
@@ -25,9 +21,9 @@ constexpr uint16_t GRAYSCALE_SCROLL_STEP = 1;
 static_assert(display::WIDTH % GRAYSCALE_COUNT == 0, "Display width must divide evenly into sixteen grayscale bars");
 
 struct State {
-    absolute_time_t next_backlight_update;
+    absolute_time_t next_palette_update;
     absolute_time_t next_frame_update;
-    size_t          backlight_index;
+    uint8_t         palette_key;
     uint16_t        grayscale_offset;
     bool            grayscale_frame_ready;
 };
@@ -52,13 +48,15 @@ uint32_t random_inclusive(const uint32_t minimum, const uint32_t maximum) {
     }
 
     const uint16_t diameter = static_cast<uint16_t>(radius * 2 + 1);
-    const uint16_t rgb444   = static_cast<uint16_t>(gray) * 0x111;
-    printf("LCD circle: size=%ux%u, center=(%u,%u), radius=%u, color=#%03X\n",
+    const uint8_t  palette_key = display::palette_key();
+    const uint16_t rgb444     = display::detail::tint_rgb444(gray, display::BASE_PALETTE_RGB444[palette_key]);
+    printf("LCD circle: size=%ux%u, center=(%u,%u), radius=%u, palette=%u, color=#%03X\n",
            static_cast<unsigned>(diameter),
            static_cast<unsigned>(diameter),
            static_cast<unsigned>(center_x),
            static_cast<unsigned>(center_y),
            static_cast<unsigned>(radius),
+           static_cast<unsigned>(palette_key),
            static_cast<unsigned>(rgb444));
     return true;
 }
@@ -78,25 +76,26 @@ void draw_grayscale_bars() {
 void init() {
     display::init();
 
-    state.backlight_index       = 0;
+    state.palette_key           = display::WHITE_PALETTE_KEY;
     state.grayscale_offset      = 0;
     state.grayscale_frame_ready = false;
-    display::set_backlight(BACKLIGHT_LEVELS[state.backlight_index]);
+    display::set_palette_key(state.palette_key);
     draw_grayscale_bars();
     display::present();
 
     const absolute_time_t now = get_absolute_time();
-    state.next_backlight_update = delayed_by_ms(now, BACKLIGHT_STEP_MS);
+    state.next_palette_update   = delayed_by_ms(now, PALETTE_STEP_MS);
     state.next_frame_update     = delayed_by_ms(now, FRAME_STEP_MS);
 }
 
 void update() {
     const absolute_time_t now = get_absolute_time();
 
-    if (time_reached(state.next_backlight_update)) {
-        state.backlight_index = (state.backlight_index + 1) % BACKLIGHT_LEVELS.size();
-        display::set_backlight(BACKLIGHT_LEVELS[state.backlight_index]);
-        state.next_backlight_update = delayed_by_ms(state.next_backlight_update, BACKLIGHT_STEP_MS);
+    if (time_reached(state.next_palette_update)) {
+        state.palette_key = static_cast<uint8_t>((state.palette_key + 1) % display::PALETTE_COUNT);
+        display::set_palette_key(state.palette_key);
+        printf("LCD palette: key=%u\n", static_cast<unsigned>(state.palette_key));
+        state.next_palette_update = delayed_by_ms(state.next_palette_update, PALETTE_STEP_MS);
     }
 
     if (time_reached(state.next_frame_update)) {

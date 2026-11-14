@@ -3,3 +3,5 @@ build
 refdocs
 Agent.md
 agent-output
+resource/font/generated_font.h
+resource/icon/generated_icons.h

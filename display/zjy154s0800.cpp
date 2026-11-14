@@ -54,6 +54,10 @@ std::array<uint8_t, TRANSFER_ROW_SIZE>    transfer_row{};
 uint8_t                                   frame_rx_sink;
 volatile uint16_t                         next_transfer_row;
 volatile bool                             frame_transfer_active;
+volatile bool                             backlight_preset_pending = true;
+volatile uint8_t                          current_backlight_key = DEFAULT_BACKLIGHT_KEY;
+uint8_t                                   current_palette_key = WHITE_PALETTE_KEY;
+volatile uint8_t                          transfer_palette_key = WHITE_PALETTE_KEY;
 
 inline void select() {
     gpio_put(board::TFT_CS_N, false);
@@ -180,19 +184,20 @@ void initialize_backlight_pwm() {
     pwm_set_gpio_level(board::TFT_BACKLIGHT, 0);
 }
 
+void apply_backlight_preset() {
+    const auto level = static_cast<uint16_t>((BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[current_backlight_key] / 100);
+    pwm_set_gpio_level(board::TFT_BACKLIGHT, level);
+    backlight_preset_pending = false;
+}
+
 void prepare_transfer_row(const uint16_t row) {
     const size_t source_offset = static_cast<size_t>(row) * PACKED_PIXELS_PER_ROW;
+    const uint16_t base       = BASE_PALETTE_RGB444[transfer_palette_key];
 
-    // Each source byte stores two grayscale pixels, G1:G2. Expanding those
-    // pixels to RGB444 produces [G1 G1] [G1 G2] [G2 G2] on the serial bus.
+    // Each source byte stores two grayscale pixels, G1:G2. Tint both pixels
+    // through the selected base color before packing RGB444 serial bytes.
     for (size_t source_index = 0, target_index = 0; source_index < PACKED_PIXELS_PER_ROW; ++source_index, target_index += 3) {
-        const uint8_t packed_gray = frame_buffer[source_offset + source_index];
-        const uint8_t first_gray  = packed_gray >> 4;
-        const uint8_t second_gray = packed_gray & 0x0F;
-
-        transfer_row[target_index]     = static_cast<uint8_t>(first_gray * 0x11);
-        transfer_row[target_index + 1] = packed_gray;
-        transfer_row[target_index + 2] = static_cast<uint8_t>(second_gray * 0x11);
+        detail::pack_gray_pair(frame_buffer[source_offset + source_index], base, transfer_row.data() + target_index);
     }
 }
 
@@ -220,6 +225,9 @@ void frame_dma_irq_handler() {
 
     deselect();
     frame_transfer_active = false;
+    if (backlight_preset_pending) {
+        apply_backlight_preset();
+    }
 }
 
 void initialize_frame_dma() {
@@ -272,6 +280,7 @@ void init() {
 
     initialize_frame_dma();
     initialize_backlight_pwm();
+    backlight_preset_pending = true;
     reset_panel();
     initialize_controller();
     clear(0x000);
@@ -281,6 +290,36 @@ void set_backlight(const float percent) {
     const float clamped = std::clamp(percent, 0.0f, 100.0f);
     const auto  level   = static_cast<uint16_t>((clamped * static_cast<float>(BACKLIGHT_PWM_WRAP + 1)) / 100.0f);
     pwm_set_gpio_level(board::TFT_BACKLIGHT, level);
+    backlight_preset_pending = false;
+}
+
+bool set_backlight_key(const uint8_t key) {
+    if (key >= BACKLIGHT_DUTY_PERCENT.size()) {
+        return false;
+    }
+
+    current_backlight_key = key;
+    if (!backlight_preset_pending) {
+        apply_backlight_preset();
+    }
+    return true;
+}
+
+uint8_t backlight_key() {
+    return current_backlight_key;
+}
+
+bool set_palette_key(const uint8_t key) {
+    if (key >= PALETTE_COUNT) {
+        return false;
+    }
+
+    current_palette_key = key;
+    return true;
+}
+
+uint8_t palette_key() {
+    return current_palette_key;
 }
 
 void clear(const Gray4 gray) {
@@ -334,6 +373,7 @@ bool present() {
         return false;
     }
 
+    transfer_palette_key = current_palette_key;
     frame_transfer_active = true;
     set_address_window(0, 0, WIDTH - 1, HEIGHT - 1);
 

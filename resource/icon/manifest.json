@@ -1,0 +1,303 @@
+{
+  "format": "RGBA PNG",
+  "transparent": true,
+  "icons": [
+    {
+      "id": "home",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_home_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "receive",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_receive_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "receive",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_receive_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "gb",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_gb_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "printer",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_printer_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "printer",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_printer_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "bluetooth",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_bluetooth_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "wifi",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_wifi_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "wifi",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_wifi_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "settings",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_settings_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "sun",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_sun_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "sd",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_sd_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "sd",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_sd_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "folder",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_folder_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "image",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_image_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "check",
+      "size": [
+        80,
+        80
+      ],
+      "path": "icon_check_80.png",
+      "placeholder": false
+    },
+    {
+      "id": "check",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_check_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "check",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_check_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "back",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_back_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "right",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_right_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "right",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_right_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "down",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_down_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "updown",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_updown_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "battery",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_battery_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "low",
+      "size": [
+        64,
+        64
+      ],
+      "path": "icon_low_64.png",
+      "placeholder": false
+    },
+    {
+      "id": "globe",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_globe_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "link",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_link_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "phone",
+      "size": [
+        48,
+        48
+      ],
+      "path": "icon_phone_48.png",
+      "placeholder": false
+    },
+    {
+      "id": "phone",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_phone_16.png",
+      "placeholder": false
+    },
+    {
+      "id": "paper",
+      "size": [
+        64,
+        64
+      ],
+      "path": "icon_paper_64.png",
+      "placeholder": false
+    },
+    {
+      "id": "warning",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_warning_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "dots",
+      "size": [
+        32,
+        32
+      ],
+      "path": "icon_dots_32.png",
+      "placeholder": false
+    },
+    {
+      "id": "dots",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_dots_16.png",
+      "placeholder": false
+    }
+  ]
+}
