@@ -29,6 +29,7 @@ inline constexpr uint     SD_MOSI             = 7;
 inline constexpr uint     SD_CARD_DETECT_N    = 22;
 inline spi_inst_t* const  SD_SPI              = spi0;
 inline constexpr uint32_t SD_SPI_INITIAL_BAUD = 400'000;
+inline constexpr uint32_t SD_SPI_BAUD         = 12'000'000;
 
 // ST7789 display (SPI1, write-only).
 inline constexpr uint     TFT_SCK       = 10;

@@ -1,15 +1,18 @@
 #include <stdio.h>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
-#include "hardware/spi.h"
 #include "pico/stdlib.h"
 
+#include "config/display_config.h"
 #include "display/ui/screen.h"
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
 #include "pin_config.h"
+#include "storage/sd_card.h"
 
 #if KP_UNIT_TEST_LCD_0
 #include "unit_test/lcd_0.h"
@@ -17,9 +20,11 @@
 
 namespace {
 
-constexpr display::Gray4 STARTUP_GRAY = 0x08;
-constexpr display::Gray4 TEXT_GRAY       = 0x0F;
-constexpr uint32_t       KEY_DEBOUNCE_MS = 25;
+constexpr display::Gray4 STARTUP_GRAY     = 0x08;
+constexpr display::Gray4 TEXT_GRAY        = 0x0F;
+constexpr uint32_t       KEY_DEBOUNCE_MS  = 25;
+constexpr uint32_t       SD_READY_DELAY_MS = 1000;
+constexpr std::string_view SD_ERROR_TEXT = "SD CARD ERROR";
 
 constexpr std::uint8_t KEY_RIGHT_MASK   = 1u << 0;
 constexpr std::uint8_t KEY_DOWN_MASK    = 1u << 1;
@@ -28,9 +33,9 @@ constexpr std::uint8_t KEY_LEFT_MASK    = 1u << 3;
 constexpr std::uint8_t KEY_UP_MASK      = 1u << 4;
 
 display::ui::Locale current_locale = display::ui::DEFAULT_LOCALE;
-display::ui::TextId current_text    = display::ui::DEFAULT_TEXT;
-std::uint8_t         current_palette_key   = display::WHITE_PALETTE_KEY;
-std::uint8_t         current_backlight_key = display::DEFAULT_BACKLIGHT_KEY;
+display::ui::TextId current_text = display::ui::DEFAULT_TEXT;
+std::uint8_t current_palette_key = display::WHITE_PALETTE_KEY;
+std::uint8_t current_backlight_percent = display::BACKLIGHT_DUTY_PERCENT[display::DEFAULT_BACKLIGHT_KEY];
 
 class FiveWayKeyScanner {
   public:
@@ -115,13 +120,9 @@ void init_power_monitoring() {
     gpio_set_function(board::CW_SCL, GPIO_FUNC_I2C);
 }
 
-void init_sd_bus() {
-    // Keep the card deselected before assigning clock and data pins to SPI.
+void init_sd_socket() {
+    // FatFs takes ownership of the SPI pins when the card is mounted.
     init_output(board::SD_CS_N, true);
-    spi_init(board::SD_SPI, board::SD_SPI_INITIAL_BAUD);
-    gpio_set_function(board::SD_MISO, GPIO_FUNC_SPI);
-    gpio_set_function(board::SD_SCK, GPIO_FUNC_SPI);
-    gpio_set_function(board::SD_MOSI, GPIO_FUNC_SPI);
     init_input(board::SD_CARD_DETECT_N, true);
 }
 
@@ -143,7 +144,7 @@ void init_game_boy_link() {
 
 void init_board() {
     init_power_monitoring();
-    init_sd_bus();
+    init_sd_socket();
     init_keys();
     init_game_boy_link();
     init_input(board::RESERVED_GP15, false);
@@ -151,6 +152,10 @@ void init_board() {
 
 bool draw_current_message() {
     return display::ui::draw_message_screen({current_locale, current_text}, STARTUP_GRAY, TEXT_GRAY);
+}
+
+bool draw_sd_error() {
+    return display::ui::draw_centered_text(SD_ERROR_TEXT, STARTUP_GRAY, TEXT_GRAY);
 }
 
 void advance_message() {
@@ -176,16 +181,37 @@ bool adjust_palette(const int delta) {
 }
 
 bool adjust_backlight(const int delta) {
-    const int next_key = static_cast<int>(current_backlight_key) + delta;
-    if (next_key < 0 || next_key >= static_cast<int>(display::BACKLIGHT_DUTY_PERCENT.size())) {
-        return false;
+    if (delta < 0) {
+        for (std::size_t index = display::BACKLIGHT_DUTY_PERCENT.size(); index > 0; --index) {
+            const auto key = index - 1;
+            const auto percent = display::BACKLIGHT_DUTY_PERCENT[key];
+            if (percent < current_backlight_percent) {
+                display::set_backlight_key(static_cast<std::uint8_t>(key));
+                current_backlight_percent = percent;
+                return true;
+            }
+        }
+    } else if (delta > 0) {
+        for (std::size_t key = 0; key < display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
+            const auto percent = display::BACKLIGHT_DUTY_PERCENT[key];
+            if (percent > current_backlight_percent) {
+                display::set_backlight_key(static_cast<std::uint8_t>(key));
+                current_backlight_percent = percent;
+                return true;
+            }
+        }
     }
+    return false;
+}
 
-    if (!display::set_backlight_key(static_cast<std::uint8_t>(next_key))) {
-        return false;
+void apply_initial_backlight(const std::uint8_t percent) {
+    for (std::size_t key = 0; key < display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
+        if (display::BACKLIGHT_DUTY_PERCENT[key] == percent) {
+            display::set_backlight_key(static_cast<std::uint8_t>(key));
+            return;
+        }
     }
-    current_backlight_key = static_cast<std::uint8_t>(next_key);
-    return true;
+    display::set_backlight(static_cast<float>(percent));
 }
 
 }  // namespace
@@ -199,39 +225,54 @@ int main() {
     unit_test::lcd_0::init();
     printf("KP_UNIT_TEST_LCD_0 enabled\n");
 #else
+    sleep_ms(SD_READY_DELAY_MS);
+    const bool sd_ready = storage::mount_initialized_card();
+    config::DisplayConfig display_config;
+    if (sd_ready && !storage::load_display_config(display_config)) {
+        printf("Using default display settings\n");
+    }
+    current_palette_key = display_config.palette_key;
+    current_backlight_percent = display_config.backlight_percent;
+
     display::ui::initialize(current_locale, current_text);
     display::init();
     display::set_palette_key(current_palette_key);
-    display::set_backlight_key(current_backlight_key);
-    bool screen_dirty = !draw_current_message();
+    apply_initial_backlight(current_backlight_percent);
+    bool screen_dirty = sd_ready ? draw_current_message() : draw_sd_error();
     if (!screen_dirty) {
-        screen_dirty = !display::present();
+        printf("Startup screen render failed\n");
+    } else if (display::present()) {
+        screen_dirty = false;
     }
 
     FiveWayKeyScanner key_scanner;
-    key_scanner.initialize();
+    if (sd_ready) {
+        key_scanner.initialize();
+    }
 #endif
 
     while (true) {
 #if KP_UNIT_TEST_LCD_0
         unit_test::lcd_0::update();
 #else
-        const std::uint8_t pressed_keys = key_scanner.poll_press_mask();
-        if ((pressed_keys & KEY_UP_MASK) != 0 && adjust_palette(-1)) {
-            screen_dirty = true;
-        }
-        if ((pressed_keys & KEY_DOWN_MASK) != 0 && adjust_palette(1)) {
-            screen_dirty = true;
-        }
-        if ((pressed_keys & KEY_CONFIRM_MASK) != 0) {
-            advance_message();
-            screen_dirty = true;
-        }
-        if ((pressed_keys & KEY_LEFT_MASK) != 0) {
-            adjust_backlight(-1);
-        }
-        if ((pressed_keys & KEY_RIGHT_MASK) != 0) {
-            adjust_backlight(1);
+        if (sd_ready) {
+            const std::uint8_t pressed_keys = key_scanner.poll_press_mask();
+            if ((pressed_keys & KEY_UP_MASK) != 0 && adjust_palette(-1)) {
+                screen_dirty = true;
+            }
+            if ((pressed_keys & KEY_DOWN_MASK) != 0 && adjust_palette(1)) {
+                screen_dirty = true;
+            }
+            if ((pressed_keys & KEY_CONFIRM_MASK) != 0) {
+                advance_message();
+                screen_dirty = true;
+            }
+            if ((pressed_keys & KEY_LEFT_MASK) != 0) {
+                adjust_backlight(-1);
+            }
+            if ((pressed_keys & KEY_RIGHT_MASK) != 0) {
+                adjust_backlight(1);
+            }
         }
         if (screen_dirty && !display::is_presenting() && display::present()) {
             screen_dirty = false;

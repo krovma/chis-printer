@@ -1,0 +1,17 @@
+# Kuper Printer microSD configuration (format version 1).
+# The card root must also contain a .kproot file.
+format_version = 1
+
+[ui]
+# The firmware ignores [ui] settings.
+# Locale choices: en, zh, ja.
+locale = "en"
+# Message choices: greeting, printer.
+startup_message = "greeting"
+
+[display]
+# Palette choices: red, yellow, green, cyan, blue, magenta, white.
+palette = "white"
+# Integer 0..100; left/right buttons step through 10, 25, 50, 75, 100.
+# Unreadable or invalid configuration uses white and 50 percent.
+backlight_percent = 50

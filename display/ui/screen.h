@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 #include "display/ui/text.h"
 
@@ -11,5 +12,7 @@ namespace display::ui {
 bool draw_greeting_screen(Locale locale, Gray4 background, Gray4 foreground, std::int16_t letter_spacing = 0);
 bool draw_message_screen(MessageSelection selection, Gray4 background, Gray4 foreground,
                          std::int16_t letter_spacing = 0);
+bool draw_centered_text(std::string_view text, Gray4 background, Gray4 foreground,
+                        std::int16_t letter_spacing = 0);
 
 }  // namespace display::ui

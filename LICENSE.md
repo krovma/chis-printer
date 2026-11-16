@@ -465,3 +465,14 @@ This project uses `i18n_keyval` from `third_party/i18n_keyval`. The library is
 distributed under the MIT License; its copyright notice and complete license
 text are retained in [`third_party/i18n_keyval/LICENSE`](third_party/i18n_keyval/LICENSE).
 
+### pico_fatfs
+
+`third_party/pico_fatfs` uses the BSD 2-Clause License; see its
+[`LICENSE`](third_party/pico_fatfs/LICENSE). Bundled [FatFs](third_party/pico_fatfs/fatfs/ff.c)
+and [PIO SPI](third_party/pico_fatfs/pio/spi/pio_spi.c) sources retain their own license notices.
+
+### tomlc17
+
+`third_party/tomlc17` uses the MIT License; see its
+[`LICENSE`](third_party/tomlc17/LICENSE).
+

@@ -35,6 +35,10 @@ option(KP_UNIT_TEST_LCD_0 "Build the LCD color and backlight unit test" OFF)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+add_subdirectory(third_party/pico_fatfs)
+add_library(tomlc17 STATIC third_party/tomlc17/tomlc17.c)
+target_include_directories(tomlc17 PUBLIC ${CMAKE_CURRENT_LIST_DIR}/third_party/tomlc17)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(ICON_GENERATOR       ${CMAKE_CURRENT_LIST_DIR}/resource/icon/generate_icon_header.py)
@@ -74,6 +78,8 @@ add_custom_target(generate_font_header DEPENDS ${FONT_HEADER})
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(kuper-printer
+    config/display_config.cpp
+    config/display_config.h
     display/palette.h
     display/ui/screen.cpp
     display/ui/screen.h
@@ -86,6 +92,8 @@ add_executable(kuper-printer
     ${FONT_HEADER}
     ${ICON_HEADER}
     resource/text/display_texts.h
+    storage/sd_card.cpp
+    storage/sd_card.h
     third_party/i18n_keyval/include/i18n_keyval/i18n.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/api.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/common.hpp
@@ -120,6 +128,8 @@ pico_enable_stdio_rtt(kuper-printer 1)
 # Add the standard library to the build
 target_link_libraries(kuper-printer
     pico_stdlib
+    pico_fatfs
+    tomlc17
 )
 
 # Add the standard include files to the build
