@@ -1,16 +1,21 @@
 #include <stdio.h>
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
 
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include "pico/multicore.h"
 #include "pico/stdlib.h"
 
 #include "config/display_config.h"
 #include "display/ui/screen.h"
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
+#include "gbp/terminal/link.h"
+#include "gbp/terminal/screen.h"
 #include "pin_config.h"
 #include "storage/sd_card.h"
 
@@ -32,10 +37,15 @@ constexpr std::uint8_t KEY_CONFIRM_MASK = 1u << 2;
 constexpr std::uint8_t KEY_LEFT_MASK    = 1u << 3;
 constexpr std::uint8_t KEY_UP_MASK      = 1u << 4;
 
-display::ui::Locale current_locale = display::ui::DEFAULT_LOCALE;
-display::ui::TextId current_text = display::ui::DEFAULT_TEXT;
 std::uint8_t current_palette_key = display::WHITE_PALETTE_KEY;
 std::uint8_t current_backlight_percent = display::BACKLIGHT_DUTY_PERCENT[display::DEFAULT_BACKLIGHT_KEY];
+gbp::terminal::Receiver receiver;
+gbp::terminal::Link link;
+std::atomic<bool> sd_ready{false};
+std::atomic<bool> preview_confirm_requested{false};
+std::atomic<std::uint32_t> visible_state{static_cast<std::uint32_t>(gbp::terminal::ViewState::Waiting)};
+std::atomic<std::uint32_t> visible_frames{0};
+alignas(8) std::array<std::uint32_t, 1024> link_core_stack{};
 
 class FiveWayKeyScanner {
   public:
@@ -150,21 +160,8 @@ void init_board() {
     init_input(board::RESERVED_GP15, false);
 }
 
-bool draw_current_message() {
-    return display::ui::draw_message_screen({current_locale, current_text}, STARTUP_GRAY, TEXT_GRAY);
-}
-
 bool draw_sd_error() {
     return display::ui::draw_centered_text(SD_ERROR_TEXT, STARTUP_GRAY, TEXT_GRAY);
-}
-
-void advance_message() {
-    const auto next = display::ui::next_message({current_locale, current_text});
-    current_locale  = next.locale;
-    current_text    = next.text;
-    if (!draw_current_message()) {
-        printf("display message render failed\n");
-    }
 }
 
 bool adjust_palette(const int delta) {
@@ -214,6 +211,112 @@ void apply_initial_backlight(const std::uint8_t percent) {
     display::set_backlight(static_cast<float>(percent));
 }
 
+#if !KP_UNIT_TEST_LCD_0
+void run_link_core() {
+    link.initialize();
+    while (true) {
+        if (preview_confirm_requested.load(std::memory_order_acquire)) {
+            receiver.confirm_preview();
+            link.set_buffer_full(false);
+            visible_frames.store(0, std::memory_order_release);
+            visible_state.store(static_cast<std::uint32_t>(gbp::terminal::ViewState::Waiting),
+                                std::memory_order_release);
+            preview_confirm_requested.store(false, std::memory_order_release);
+        }
+        if (link.poll(receiver)) {
+            visible_frames.store(receiver.data_frames(), std::memory_order_release);
+            visible_state.store(static_cast<std::uint32_t>(receiver.state()), std::memory_order_release);
+        }
+        tight_loop_contents();
+    }
+}
+
+bool draw_m1_state(const gbp::terminal::ViewState state, const std::uint32_t frames) {
+    switch (state) {
+        case gbp::terminal::ViewState::Waiting:
+            return gbp::terminal::draw_waiting();
+        case gbp::terminal::ViewState::Receiving:
+            return gbp::terminal::draw_receiving(frames);
+        case gbp::terminal::ViewState::Preview:
+            gbp::terminal::draw_preview(receiver);
+            return true;
+    }
+    return false;
+}
+
+void run_ui_core() {
+    const bool card_ready = sd_ready.load(std::memory_order_acquire);
+    display::ui::initialize();
+    display::init();
+    display::set_palette_key(current_palette_key);
+    apply_initial_backlight(current_backlight_percent);
+
+    bool screen_dirty = !(card_ready ? gbp::terminal::draw_waiting() : draw_sd_error());
+    if (!screen_dirty && display::present()) {
+        while (display::is_presenting()) {
+            tight_loop_contents();
+        }
+    } else {
+        screen_dirty = true;
+    }
+
+    FiveWayKeyScanner key_scanner;
+    if (card_ready) {
+        key_scanner.initialize();
+        multicore_launch_core1_with_stack(run_link_core, link_core_stack.data(), sizeof(link_core_stack));
+    }
+
+    gbp::terminal::ViewState drawn_state = gbp::terminal::ViewState::Waiting;
+    std::uint32_t drawn_frames = 0;
+    bool confirmation_pending = false;
+    while (true) {
+        const auto state = static_cast<gbp::terminal::ViewState>(visible_state.load(std::memory_order_acquire));
+        const std::uint32_t frames = visible_frames.load(std::memory_order_acquire);
+        if (confirmation_pending && state != gbp::terminal::ViewState::Preview) {
+            confirmation_pending = false;
+        }
+        if (card_ready && (state != drawn_state ||
+                           (state == gbp::terminal::ViewState::Receiving && frames != drawn_frames))) {
+            screen_dirty = true;
+        }
+
+        if (card_ready) {
+            const std::uint8_t pressed_keys = key_scanner.poll_press_mask();
+            if ((pressed_keys & KEY_UP_MASK) != 0 && adjust_palette(-1)) {
+                screen_dirty = true;
+            }
+            if ((pressed_keys & KEY_DOWN_MASK) != 0 && adjust_palette(1)) {
+                screen_dirty = true;
+            }
+            if ((pressed_keys & KEY_CONFIRM_MASK) != 0 && state == gbp::terminal::ViewState::Preview) {
+                confirmation_pending = true;
+                preview_confirm_requested.store(true, std::memory_order_release);
+            }
+            if ((pressed_keys & KEY_LEFT_MASK) != 0) {
+                adjust_backlight(-1);
+            }
+            if ((pressed_keys & KEY_RIGHT_MASK) != 0) {
+                adjust_backlight(1);
+            }
+        }
+
+        if (screen_dirty && !display::is_presenting()) {
+            const auto next_state = static_cast<gbp::terminal::ViewState>(visible_state.load(std::memory_order_acquire));
+            const std::uint32_t next_frames = visible_frames.load(std::memory_order_acquire);
+            if (next_state != gbp::terminal::ViewState::Preview || !confirmation_pending) {
+                const bool rendered = card_ready ? draw_m1_state(next_state, next_frames) : draw_sd_error();
+                if (rendered && display::present()) {
+                    drawn_state = next_state;
+                    drawn_frames = next_frames;
+                    screen_dirty = false;
+                }
+            }
+        }
+        tight_loop_contents();
+    }
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -224,60 +327,21 @@ int main() {
 #if KP_UNIT_TEST_LCD_0
     unit_test::lcd_0::init();
     printf("KP_UNIT_TEST_LCD_0 enabled\n");
+    while (true) {
+        unit_test::lcd_0::update();
+        tight_loop_contents();
+    }
 #else
     sleep_ms(SD_READY_DELAY_MS);
-    const bool sd_ready = storage::mount_initialized_card();
+    const bool card_ready = storage::mount_initialized_card();
     config::DisplayConfig display_config;
-    if (sd_ready && !storage::load_display_config(display_config)) {
+    if (card_ready && !storage::load_display_config(display_config)) {
         printf("Using default display settings\n");
     }
     current_palette_key = display_config.palette_key;
     current_backlight_percent = display_config.backlight_percent;
+    sd_ready.store(card_ready, std::memory_order_release);
 
-    display::ui::initialize(current_locale, current_text);
-    display::init();
-    display::set_palette_key(current_palette_key);
-    apply_initial_backlight(current_backlight_percent);
-    bool screen_dirty = sd_ready ? draw_current_message() : draw_sd_error();
-    if (!screen_dirty) {
-        printf("Startup screen render failed\n");
-    } else if (display::present()) {
-        screen_dirty = false;
-    }
-
-    FiveWayKeyScanner key_scanner;
-    if (sd_ready) {
-        key_scanner.initialize();
-    }
+    run_ui_core();
 #endif
-
-    while (true) {
-#if KP_UNIT_TEST_LCD_0
-        unit_test::lcd_0::update();
-#else
-        if (sd_ready) {
-            const std::uint8_t pressed_keys = key_scanner.poll_press_mask();
-            if ((pressed_keys & KEY_UP_MASK) != 0 && adjust_palette(-1)) {
-                screen_dirty = true;
-            }
-            if ((pressed_keys & KEY_DOWN_MASK) != 0 && adjust_palette(1)) {
-                screen_dirty = true;
-            }
-            if ((pressed_keys & KEY_CONFIRM_MASK) != 0) {
-                advance_message();
-                screen_dirty = true;
-            }
-            if ((pressed_keys & KEY_LEFT_MASK) != 0) {
-                adjust_backlight(-1);
-            }
-            if ((pressed_keys & KEY_RIGHT_MASK) != 0) {
-                adjust_backlight(1);
-            }
-        }
-        if (screen_dirty && !display::is_presenting() && display::present()) {
-            screen_dirty = false;
-        }
-#endif
-        tight_loop_contents();
-    }
 }

@@ -87,6 +87,20 @@ add_executable(kuper-printer
     display/ui/text.h
     display/zjy154s0800.cpp
     display/zjy154s0800.h
+    gbp/protocol/packet.cpp
+    gbp/protocol/packet.h
+    gbp/protocol/packet_writer.cpp
+    gbp/protocol/packet_writer.h
+    gbp/protocol/rle.cpp
+    gbp/protocol/rle.h
+    gbp/terminal/link.cpp
+    gbp/terminal/link.h
+    gbp/terminal/printer_session.cpp
+    gbp/terminal/printer_session.h
+    gbp/terminal/receiver.cpp
+    gbp/terminal/receiver.h
+    gbp/terminal/screen.cpp
+    gbp/terminal/screen.h
     main.cpp
     pin_config.h
     ${FONT_HEADER}
@@ -128,6 +142,7 @@ pico_enable_stdio_rtt(kuper-printer 1)
 # Add the standard library to the build
 target_link_libraries(kuper-printer
     pico_stdlib
+    pico_multicore
     pico_fatfs
     tomlc17
 )
