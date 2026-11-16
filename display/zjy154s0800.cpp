@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ken(github.com/krovma)
+
 #include "display/zjy154s0800.h"
 
 #include <algorithm>
