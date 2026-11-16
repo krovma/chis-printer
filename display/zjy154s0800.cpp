@@ -54,8 +54,10 @@ std::array<uint8_t, TRANSFER_ROW_SIZE>    transfer_row{};
 uint8_t                                   frame_rx_sink;
 volatile uint16_t                         next_transfer_row;
 volatile bool                             frame_transfer_active;
-volatile bool                             backlight_preset_pending = true;
+volatile bool                             backlight_pending = true;
 volatile uint8_t                          current_backlight_key = DEFAULT_BACKLIGHT_KEY;
+volatile uint16_t                         requested_backlight_level =
+    (BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[DEFAULT_BACKLIGHT_KEY] / 100;
 uint8_t                                   current_palette_key = WHITE_PALETTE_KEY;
 volatile uint8_t                          transfer_palette_key = WHITE_PALETTE_KEY;
 
@@ -184,10 +186,9 @@ void initialize_backlight_pwm() {
     pwm_set_gpio_level(board::TFT_BACKLIGHT, 0);
 }
 
-void apply_backlight_preset() {
-    const auto level = static_cast<uint16_t>((BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[current_backlight_key] / 100);
-    pwm_set_gpio_level(board::TFT_BACKLIGHT, level);
-    backlight_preset_pending = false;
+void apply_backlight_level() {
+    pwm_set_gpio_level(board::TFT_BACKLIGHT, requested_backlight_level);
+    backlight_pending = false;
 }
 
 void prepare_transfer_row(const uint16_t row) {
@@ -225,8 +226,8 @@ void frame_dma_irq_handler() {
 
     deselect();
     frame_transfer_active = false;
-    if (backlight_preset_pending) {
-        apply_backlight_preset();
+    if (backlight_pending) {
+        apply_backlight_level();
     }
 }
 
@@ -280,7 +281,7 @@ void init() {
 
     initialize_frame_dma();
     initialize_backlight_pwm();
-    backlight_preset_pending = true;
+    backlight_pending = true;
     reset_panel();
     initialize_controller();
     clear(0x000);
@@ -288,9 +289,10 @@ void init() {
 
 void set_backlight(const float percent) {
     const float clamped = std::clamp(percent, 0.0f, 100.0f);
-    const auto  level   = static_cast<uint16_t>((clamped * static_cast<float>(BACKLIGHT_PWM_WRAP + 1)) / 100.0f);
-    pwm_set_gpio_level(board::TFT_BACKLIGHT, level);
-    backlight_preset_pending = false;
+    requested_backlight_level = static_cast<uint16_t>((clamped * static_cast<float>(BACKLIGHT_PWM_WRAP + 1)) / 100.0f);
+    if (!backlight_pending) {
+        apply_backlight_level();
+    }
 }
 
 bool set_backlight_key(const uint8_t key) {
@@ -299,8 +301,9 @@ bool set_backlight_key(const uint8_t key) {
     }
 
     current_backlight_key = key;
-    if (!backlight_preset_pending) {
-        apply_backlight_preset();
+    requested_backlight_level = static_cast<uint16_t>((BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[key] / 100);
+    if (!backlight_pending) {
+        apply_backlight_level();
     }
     return true;
 }

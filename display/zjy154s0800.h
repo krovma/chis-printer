@@ -20,18 +20,17 @@ static_assert(BACKLIGHT_DUTY_PERCENT[DEFAULT_BACKLIGHT_KEY] == 50);
 using Gray4 = uint8_t;
 
 // Initialize the ZJY154S0800TG02 module with the vendor-provided ST7789VW
-// register sequence. Unless set_backlight() is called directly, the backlight
-// stays off until the first frame finishes transferring.
+// register sequence. The backlight stays off until the first frame finishes.
 void init();
 
 // Set the active-high BLK PWM duty cycle directly, clamped to 0..100 percent.
 // This overrides the selected preset until set_backlight_key() is called.
+// Before the first frame, the value is stored and applied when transfer ends.
 void set_backlight(float percent);
 
 // Keys 0..4 select the five preset duty cycles above. Key 2 (50%) is the
 // default. An invalid key is rejected without changing the current setting.
-// Before the first complete frame, the preset is stored while BLK stays off,
-// unless set_backlight() has explicitly enabled it already.
+// Before the first complete frame, the preset is stored while BLK stays off.
 bool set_backlight_key(uint8_t key);
 uint8_t backlight_key();
 
