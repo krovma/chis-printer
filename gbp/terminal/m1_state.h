@@ -20,6 +20,7 @@ class M1State {
         const std::uint8_t* data = nullptr;
         std::size_t size = 0;
         std::uint8_t palette = 0xE4;
+        format::PrintControl print_control = format::DEFAULT_PRINT_CONTROL;
         std::uint32_t generation = 0;
     };
 

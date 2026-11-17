@@ -19,7 +19,7 @@ class GbpStore {
     enum class StepResult : std::uint8_t { Idle, Progress, Complete, Error };
 
     bool initialize();
-    bool begin(const std::uint8_t* data, std::size_t size);
+    bool begin(const std::uint8_t* data, std::size_t size, const gbp::format::PrintControl& print_control);
     StepResult step();
     bool busy() const { return phase_ != Phase::Idle; }
 

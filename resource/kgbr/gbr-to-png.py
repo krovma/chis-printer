@@ -1,23 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Ken(github.com/krovma)
 
-"""Render a KGBR v1 Game Boy Printer image as a grayscale PNG."""
+"""Render one or more KGBR Game Boy Printer images as a grayscale PNG."""
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image
 
 
-HEADER_SIZE = 8
+HEADER_SIZE = 12
+LEGACY_HEADER_SIZE = 8
 MAGIC = b"KGBR"
-VERSION = 1
-GRAY_LEVELS = (255, 170, 85, 0)
+VERSION = 2
+LEGACY_VERSION = 1
+DEFAULT_PALETTE = 0xE4
+DEFAULT_EXPOSURE = 0x7F
+MARGIN_UNIT_HEIGHT = 8
 
 
 class GBRFormatError(ValueError):
     """Raised when an input does not contain a supported KGBR image."""
+
+
+@dataclass(frozen=True)
+class GBRImage:
+    width: int
+    height: int
+    pixels: bytes
+    margin: int
 
 
 def parse_palette(value: str) -> int:
@@ -30,29 +43,39 @@ def parse_palette(value: str) -> int:
     return palette
 
 
-def decode_gbr(data: bytes, palette: int) -> tuple[int, int, bytes]:
-    if len(data) < HEADER_SIZE:
+def decode_gbr(data: bytes, palette: int | None = None) -> GBRImage:
+    if len(data) < LEGACY_HEADER_SIZE:
         raise GBRFormatError("file is shorter than the 8-byte KGBR header")
     if data[:4] != MAGIC:
         raise GBRFormatError("invalid KGBR signature")
-    if data[4] != VERSION:
+    version = data[4]
+    if version not in (LEGACY_VERSION, VERSION):
         raise GBRFormatError(f"unsupported KGBR version: {data[4]}")
+    header_size = HEADER_SIZE if version == VERSION else LEGACY_HEADER_SIZE
+    if len(data) < header_size:
+        raise GBRFormatError(f"file is shorter than the {header_size}-byte KGBR header")
 
     width = data[5]
     height = int.from_bytes(data[6:8], "little")
+    margin = data[9] if version == VERSION else 0
+    file_palette = data[10] if version == VERSION else DEFAULT_PALETTE
+    exposure = (data[11] & 0x7F) if version == VERSION else DEFAULT_EXPOSURE
+    active_palette = file_palette if palette is None else palette
+    darkest = 0x7F - exposure
+    gray_levels = tuple((255 * (3 - shade) + darkest * shade + 1) // 3 for shade in range(4))
     if width == 0 or width % 8:
         raise GBRFormatError(f"width must be a positive multiple of 8, got {width}")
     if height == 0 or height % 8:
         raise GBRFormatError(f"height must be a positive multiple of 8, got {height}")
 
-    expected_size = HEADER_SIZE + width * height // 4
+    expected_size = header_size + width * height // 4
     if len(data) != expected_size:
         raise GBRFormatError(f"expected {expected_size} bytes, got {len(data)}")
 
     pixels = bytearray(width * height)
     tile_columns = width // 8
     tile_rows = height // 8
-    tile_data = memoryview(data)[HEADER_SIZE:]
+    tile_data = memoryview(data)[header_size:]
     for tile_y in range(tile_rows):
         for tile_x in range(tile_columns):
             tile_offset = (tile_y * tile_columns + tile_x) * 16
@@ -63,39 +86,58 @@ def decode_gbr(data: bytes, palette: int) -> tuple[int, int, bytes]:
                 for x in range(8):
                     bit = 7 - x
                     color = ((low >> bit) & 1) | (((high >> bit) & 1) << 1)
-                    shade = (palette >> (color * 2)) & 0x03
-                    pixels[output_offset + x] = GRAY_LEVELS[shade]
-    return width, height, bytes(pixels)
+                    shade = (active_palette >> (color * 2)) & 0x03
+                    pixels[output_offset + x] = gray_levels[shade]
+    return GBRImage(width, height, bytes(pixels), margin)
+
+
+def merge_images(images: list[GBRImage]) -> tuple[int, int, bytes]:
+    width = images[0].width
+    pixels = bytearray()
+    for image in images:
+        if image.width != width:
+            raise GBRFormatError("all input images must have the same width")
+        before = (image.margin >> 4) * MARGIN_UNIT_HEIGHT
+        after = (image.margin & 0x0F) * MARGIN_UNIT_HEIGHT
+        pixels.extend(b"\xFF" * (width * before))
+        pixels.extend(image.pixels)
+        pixels.extend(b"\xFF" * (width * after))
+    return width, len(pixels) // width, bytes(pixels)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path, help="Input KGBR .gbr file")
-    parser.add_argument("-o", "--output", type=Path, help="Output PNG path (default: input name with .png)")
+    parser.add_argument("input", type=Path, nargs="+", help="Input KGBR .gbr files, in merge order")
+    parser.add_argument("-o", "--output", type=Path, help="Output PNG path")
     parser.add_argument(
         "--palette",
         type=parse_palette,
-        default=0xE4,
-        help="Game Boy palette register value, in decimal or with 0x prefix (default: 0xE4)",
+        help="Override the palette in every input file (decimal or 0x-prefixed)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    input_path: Path = args.input
-    output_path: Path = args.output or input_path.with_suffix(".png")
-    if input_path.resolve() == output_path.resolve():
+    input_paths: list[Path] = args.input
+    first_input = input_paths[0]
+    default_output = (first_input.with_suffix(".png") if len(input_paths) == 1 else
+                      first_input.with_name(f"{first_input.stem}-merged.png"))
+    output_path: Path = args.output or default_output
+    if any(input_path.resolve() == output_path.resolve() for input_path in input_paths):
         raise SystemExit("error: output path must differ from input path")
     try:
-        data = input_path.read_bytes()
-        width, height, pixels = decode_gbr(data, args.palette)
+        images = [decode_gbr(path.read_bytes(), args.palette) for path in input_paths]
+        if len(images) == 1:
+            width, height, pixels = images[0].width, images[0].height, images[0].pixels
+        else:
+            width, height, pixels = merge_images(images)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with Image.frombytes("L", (width, height), pixels) as image:
             image.save(output_path, format="PNG")
     except (OSError, GBRFormatError) as exc:
         raise SystemExit(f"error: {exc}") from exc
-    print(f"rendered {input_path} ({width}x{height}) -> {output_path}")
+    print(f"rendered {len(input_paths)} file(s) ({width}x{height}) -> {output_path}")
 
 
 if __name__ == "__main__":

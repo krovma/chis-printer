@@ -50,7 +50,8 @@ bool GbpStore::initialize() {
     return true;
 }
 
-bool GbpStore::begin(const std::uint8_t* data, const std::size_t size) {
+bool GbpStore::begin(const std::uint8_t* data, const std::size_t size,
+                     const gbp::format::PrintControl& print_control) {
     if (!initialized_ || busy() || data == nullptr || size < gbp::terminal::BYTES_PER_TILE_ROW ||
         size % gbp::terminal::BYTES_PER_TILE_ROW != 0 || size > gbp::terminal::IMAGE_CAPACITY) {
         printf("ERROR: invalid GBR image or writer state\n");
@@ -78,7 +79,8 @@ bool GbpStore::begin(const std::uint8_t* data, const std::size_t size) {
         return false;
     }
 
-    header_ = gbp::format::make_gbr_header(gbp::format::GBR_WIDTH, static_cast<std::uint16_t>(height));
+    header_ = gbp::format::make_gbr_header(gbp::format::GBR_WIDTH, static_cast<std::uint16_t>(height),
+                                           print_control);
     data_ = data;
     size_ = size;
     offset_ = 0;

@@ -93,10 +93,12 @@ extern "C" FRESULT f_unlink(const TCHAR* path) {
 
 int main() {
     std::array<std::uint8_t, 320> first_image{};
+    const gbp::format::PrintControl default_print{1, 0x13, 0xE4, 0x40};
+    const gbp::format::PrintControl custom_print{0, 0xA5, 0x2D, 0xFF};
     storage::GbpStore initial_store;
     assert(initial_store.initialize());
     assert(directory_exists);
-    assert(initial_store.begin(first_image.data(), first_image.size()));
+    assert(initial_store.begin(first_image.data(), first_image.size(), default_print));
     finish_write(initial_store);
     assert(files.count("0:/DCIM/00001.gbr") == 1);
 
@@ -112,11 +114,11 @@ int main() {
     for (std::size_t i = 0; i < image.size(); ++i) {
         image[i] = static_cast<std::uint8_t>(i);
     }
-    assert(!restarted_store.begin(image.data(), 1599));
-    assert(restarted_store.begin(image.data(), image.size()));
+    assert(!restarted_store.begin(image.data(), 1599, custom_print));
+    assert(restarted_store.begin(image.data(), image.size(), custom_print));
     finish_write(restarted_store);
     const auto& stored = files.at("0:/DCIM/100002.gbr");
-    const auto header = gbp::format::make_gbr_header(160, 40);
+    const auto header = gbp::format::make_gbr_header(160, 40, custom_print);
     assert(stored.size() == header.size() + image.size());
     assert(std::equal(header.begin(), header.end(), stored.begin()));
     assert(std::equal(image.begin(), image.end(), stored.begin() + header.size()));
@@ -127,10 +129,10 @@ int main() {
     assert(std::string(seven_digit_path) == "0:/DCIM/1000000.gbr");
 
     fail_next_write = true;
-    assert(restarted_store.begin(image.data(), image.size()));
+    assert(restarted_store.begin(image.data(), image.size(), custom_print));
     assert(restarted_store.step() == storage::GbpStore::StepResult::Error);
     assert(files.count("0:/DCIM/100003.gbr") == 0);
-    assert(restarted_store.begin(first_image.data(), first_image.size()));
+    assert(restarted_store.begin(first_image.data(), first_image.size(), default_print));
     finish_write(restarted_store);
     assert(files.count("0:/DCIM/100004.gbr") == 1);
 }

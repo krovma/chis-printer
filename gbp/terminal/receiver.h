@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "gbp/format/gbr.h"
 #include "gbp/protocol/packet.h"
 #include "gbp/protocol/rle.h"
 
@@ -34,6 +35,7 @@ class Receiver {
     std::size_t image_size() const { return image_size_; }
     const std::uint8_t* image_data() const { return image_; }
     std::uint8_t palette() const { return palette_; }
+    const format::PrintControl& print_control() const { return print_control_; }
     bool buffer_full() const { return buffer_full_; }
 
   private:
@@ -49,8 +51,9 @@ class Receiver {
     std::size_t packet_start_size_ = 0;
     std::uint32_t data_frames_ = 0;
     std::uint8_t palette_ = 0xE4;
-    std::uint16_t print_payload_index_ = 0;
-    std::uint8_t pending_palette_ = 0xE4;
+    format::PrintControl print_control_ = format::DEFAULT_PRINT_CONTROL;
+    format::PrintControl pending_print_control_ = format::DEFAULT_PRINT_CONTROL;
+    std::uint8_t print_payload_index_ = 0;
     bool packet_failed_ = false;
     bool packet_overflow_ = false;
     bool packet_open_ = false;

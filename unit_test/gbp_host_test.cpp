@@ -102,8 +102,10 @@ int main() {
     send(receiver, packet(Command::Data, 0, tile_row, true));
     assert(receiver.data_frames() == 0);
 
-    const auto header = gbp::format::make_gbr_header(160, 16);
-    const std::array<std::uint8_t, 8> expected_header{'K', 'G', 'B', 'R', 1, 160, 16, 0};
+    const gbp::format::PrintControl custom_print{0, 0x13, 0x2D, 0x7F};
+    const auto header = gbp::format::make_gbr_header(160, 16, custom_print);
+    const std::array<std::uint8_t, 12> expected_header{'K', 'G', 'B', 'R', 2, 160, 16, 0,
+                                                        0, 0x13, 0x2D, 0x7F};
     assert(header == expected_header);
 
     std::uint64_t file_number = 0;
@@ -119,12 +121,16 @@ int main() {
     static gbp::terminal::M1State m1;
     send(m1, packet(Command::Init, 0, {}));
     send(m1, packet(Command::Data, 0, tile_row));
-    send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
+    send(m1, packet(Command::Print, 0, {0, 0x13, 0x2D, 0x7F}, true));
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Receiving);
+    send(m1, packet(Command::Print, 0, {0, 0x13, 0x2D, 0x7F}));
     assert(m1.receiver().state() == gbp::terminal::ViewState::Waiting);
     assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
     gbp::terminal::M1State::Frame first{};
     assert(m1.acquire_frame(first));
     assert(first.size == 320 && first.data[0] == 0x80);
+    assert(first.print_control == custom_print);
+    assert(first.palette == 0x1E);
 
     send(m1, packet(Command::Inquiry, 0, {}));
     assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
@@ -167,6 +173,8 @@ int main() {
     send(receiver, packet(Command::Print, 0, {1, 0, 0, 0x40}));
     assert(receiver.state() == gbp::terminal::ViewState::Preview);
     assert(receiver.palette() == 0xE4);
+    const gbp::format::PrintControl zero_palette_print{1, 0, 0, 0x40};
+    assert(receiver.print_control() == zero_palette_print);
     assert(receiver.buffer_full());
     receiver.confirm_preview();
     assert(receiver.state() == gbp::terminal::ViewState::Waiting);

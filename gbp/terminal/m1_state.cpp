@@ -35,7 +35,8 @@ void M1State::core1_on_receiver_change() {
         }
 
         const std::uint32_t next_generation = generation_ == MAX_GENERATION ? 1 : generation_ + 1;
-        handed_off_ = {receiver_.image_data(), receiver_.image_size(), receiver_.palette(), next_generation};
+        handed_off_ = {receiver_.image_data(), receiver_.image_size(), receiver_.palette(),
+                       receiver_.print_control(), next_generation};
         active_buffer_ ^= 1u;
         receiver_.use_buffer(buffers_[active_buffer_]);
         frames_.store(0, std::memory_order_release);

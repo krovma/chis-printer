@@ -332,7 +332,7 @@ void run_ui_core() {
         if (card_ready && !frame_owned && m1_state.acquire_frame(active_frame)) {
             frame_owned = true;
             frame_displayed_or_skipped = false;
-            save_active = gbp_store.begin(active_frame.data, active_frame.size);
+            save_active = gbp_store.begin(active_frame.data, active_frame.size, active_frame.print_control);
             screen_dirty = true;
         }
 

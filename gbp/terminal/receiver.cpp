@@ -53,8 +53,9 @@ void Receiver::reset() {
     packet_start_size_ = 0;
     data_frames_ = 0;
     palette_ = 0xE4;
+    print_control_ = format::DEFAULT_PRINT_CONTROL;
+    pending_print_control_ = format::DEFAULT_PRINT_CONTROL;
     print_payload_index_ = 0;
-    pending_palette_ = 0xE4;
     packet_failed_ = false;
     packet_overflow_ = false;
     packet_open_ = false;
@@ -78,7 +79,7 @@ void Receiver::begin_packet(const protocol::Header& header) {
     packet_failed_ = false;
     packet_overflow_ = false;
     print_payload_index_ = 0;
-    pending_palette_ = palette_;
+    pending_print_control_ = print_control_;
     if (header.command == static_cast<std::uint8_t>(protocol::Command::Data)) {
         packet_failed_ = header.compression > 1;
         decoder_.reset(header.compression == 1);
@@ -87,8 +88,8 @@ void Receiver::begin_packet(const protocol::Header& header) {
 
 void Receiver::consume_payload(const protocol::Header& header, const std::uint8_t byte) {
     if (header.command == static_cast<std::uint8_t>(protocol::Command::Print)) {
-        if (print_payload_index_++ == 2) {
-            pending_palette_ = byte;
+        if (print_payload_index_ < pending_print_control_.size()) {
+            pending_print_control_[print_payload_index_++] = byte;
         }
         return;
     }
@@ -139,7 +140,8 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
                 image_size_ % BYTES_PER_TILE_ROW != 0) {
                 return false;
             }
-            palette_ = pending_palette_;
+            print_control_ = pending_print_control_;
+            palette_ = print_control_[2];
             if (palette_ == 0) {
                 palette_ = 0xE4;
             } else if (palette_ == 0xE1) {
