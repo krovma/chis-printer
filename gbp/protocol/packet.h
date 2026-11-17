@@ -12,6 +12,7 @@ inline constexpr std::uint8_t STATUS_UNPROCESSED = 0x08;
 inline constexpr std::uint8_t STATUS_FULL = 0x04;
 inline constexpr std::uint8_t STATUS_BUSY = 0x02;
 inline constexpr std::uint8_t STATUS_CHECKSUM_ERROR = 0x01;
+inline constexpr std::uint8_t STATUS_ERROR_MASK = 0xF1;
 
 enum class Command : std::uint8_t {
     Init = 0x01,

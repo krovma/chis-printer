@@ -67,7 +67,7 @@ bool mount_initialized_card() {
     return true;
 }
 
-bool load_display_config(config::DisplayConfig& output) {
+bool load_firmware_config(config::FirmwareConfig& output) {
     if (!mounted) {
         return false;
     }
@@ -94,10 +94,10 @@ bool load_display_config(config::DisplayConfig& output) {
         return false;
     }
 
-    const bool parsed = config::parse_display_config(
+    const bool parsed = config::parse_firmware_config(
         std::string_view{config_buffer.data(), static_cast<std::size_t>(bytes_read)}, output);
     if (!parsed) {
-        printf("config.toml display settings invalid\n");
+        printf("config.toml settings invalid\n");
     }
     return parsed;
 }

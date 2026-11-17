@@ -18,6 +18,13 @@ inline constexpr std::uint8_t GBR_VERSION = 2;
 inline constexpr std::uint8_t GBR_WIDTH = 160;
 inline constexpr std::size_t GBR_HEADER_SIZE = 12;
 
+constexpr std::uint8_t preview_palette(const std::uint8_t raw) {
+    if (raw == 0) return 0xE4;
+    if (raw == 0xE1) return 0xD2;
+    if (raw == 0x2D) return 0x1E;
+    return raw;
+}
+
 constexpr std::array<std::uint8_t, GBR_HEADER_SIZE> make_gbr_header(const std::uint8_t width,
                                                                     const std::uint16_t height,
                                                                     const PrintControl& print_control) {

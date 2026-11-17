@@ -80,6 +80,12 @@ std::uint8_t reply_status(gbp::terminal::PrinterSession& session, const std::vec
 
 int main() {
     using gbp::protocol::Command;
+    std::array<std::uint8_t, 10> init_encoded{};
+    const std::array<std::uint8_t, 10> expected_init{0x88, 0x33, 0x01, 0, 0, 0, 0x01, 0, 0, 0};
+    assert(gbp::protocol::write_packet(Command::Init, false, nullptr, 0,
+                                       init_encoded.data(), init_encoded.size()) == init_encoded.size());
+    assert(init_encoded == expected_init);
+
     std::array<std::uint8_t, 16> encoded{};
     const std::uint8_t print_options[4]{1, 0, 0xE4, 0x40};
     assert(gbp::protocol::write_packet(Command::Print, false, print_options, 4,

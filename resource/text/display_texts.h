@@ -16,7 +16,7 @@ struct Translation {
 
 // Every string that may be rendered on the LCD belongs in this table. The
 // font generator reads the value column to keep the glyph set synchronized.
-inline constexpr std::array<Translation, 9> DISPLAY_TEXTS{{
+inline constexpr std::array<Translation, 19> DISPLAY_TEXTS{{
     {"en", "greeting", u8"Hello World!"},
     {"zh", "greeting", u8"你好，世界！"},
     {"ja", "greeting", u8"よこそう、世界へ！"},
@@ -26,6 +26,16 @@ inline constexpr std::array<Translation, 9> DISPLAY_TEXTS{{
     {"en", "sd_card_error", u8"SD CARD ERROR"},
     {"en", "m1_waiting", u8"Waiting"},
     {"en", "m1_receiving", u8"Receiving 0123456789"},
+    {"en", "menu", u8"Menu"},
+    {"en", "mode_m1", u8"M1"},
+    {"en", "mode_m2", u8"M2"},
+    {"en", "gbr_files", u8"GBR files"},
+    {"en", "no_gbr", u8"No GBR files"},
+    {"en", "printing", u8"Printing"},
+    {"en", "gbr_error", u8"GBR error"},
+    {"en", "print_error", u8"Print error"},
+    {"en", "m1_error", u8"M1 error"},
+    {"en", "filename_glyphs", u8"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-? >/%"},
 }};
 
 }  // namespace firmware_text

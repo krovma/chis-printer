@@ -15,3 +15,8 @@ palette = "white"
 # Integer 0..100; left/right buttons step through 10, 25, 50, 75, 100.
 # Unreadable or invalid configuration uses white and 50 percent.
 backlight_percent = 50
+
+[m2]
+# SC rising edge to SI sampling delay, in microseconds (integer 2..10).
+# Omit or use an invalid value to keep the measured default of 5 us.
+rx_sample_delay_us = 5

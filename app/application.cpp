@@ -1,0 +1,441 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Ken(github.com/krovma)
+
+#include "app/application.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <new>
+#include <string_view>
+#include <utility>
+
+#include "hardware/gpio.h"
+#include "hardware/regs/addressmap.h"
+#include "pico/multicore.h"
+#include "pico/stdlib.h"
+
+#include "app/screen.h"
+#include "app/state_machine.h"
+#include "display/ui/screen.h"
+#include "display/zjy154s0800.h"
+#include "gbp/format/gbr.h"
+#include "gbp/terminal/m1_state.h"
+#include "gbp/terminal/screen.h"
+#include "gbp/terminal/worker.h"
+#include "pin_config.h"
+#include "storage/gbr_library.h"
+#include "storage/gbp_store.h"
+
+extern "C" {
+extern char __end__;
+extern char __StackLimit;
+extern char __StackBottom;
+extern char __StackTop;
+void* _sbrk(int increment);
+}
+
+namespace app {
+namespace {
+
+constexpr std::uint32_t KEY_DEBOUNCE_MS = 25;
+constexpr std::uint8_t KEY_RIGHT_MASK = 1u << 0;
+constexpr std::uint8_t KEY_DOWN_MASK = 1u << 1;
+constexpr std::uint8_t KEY_CONFIRM_MASK = 1u << 2;
+constexpr std::uint8_t KEY_LEFT_MASK = 1u << 3;
+constexpr std::uint8_t KEY_UP_MASK = 1u << 4;
+
+gbp::terminal::Worker worker;
+alignas(8) std::array<std::uint32_t, 1024> worker_stack{};
+
+void run_worker() { worker.run(); }
+
+void report_sram_usage() {
+    const auto ram_start = static_cast<std::uintptr_t>(SRAM_BASE);
+    const auto ram_end = reinterpret_cast<std::uintptr_t>(&__StackLimit);
+    const auto static_end = reinterpret_cast<std::uintptr_t>(&__end__);
+    const auto heap_end = reinterpret_cast<std::uintptr_t>(_sbrk(0));
+    const auto stack_bottom = reinterpret_cast<std::uintptr_t>(&__StackBottom);
+    const auto stack_top = reinterpret_cast<std::uintptr_t>(&__StackTop);
+    std::uintptr_t stack_pointer = 0;
+    __asm volatile("mov %0, sp" : "=r"(stack_pointer));
+
+    const auto main_used = heap_end - ram_start;
+    const auto main_free = heap_end <= ram_end ? ram_end - heap_end : 0;
+    const auto core0_stack_used = stack_top - stack_pointer;
+    printf("SRAM main=%lu/%lu free=%lu static=%lu heap=%lu core0_stack=%lu/%lu B\n",
+           static_cast<unsigned long>(main_used), static_cast<unsigned long>(ram_end - ram_start),
+           static_cast<unsigned long>(main_free), static_cast<unsigned long>(static_end - ram_start),
+           static_cast<unsigned long>(heap_end - static_end), static_cast<unsigned long>(core0_stack_used),
+           static_cast<unsigned long>(stack_top - stack_bottom));
+}
+
+class KeyScanner {
+  public:
+    void initialize() {
+        raw_pressed_ = read_pressed_mask();
+        stable_pressed_ = raw_pressed_;
+        raw_changed_at_ = get_absolute_time();
+    }
+
+    Key poll() {
+        const absolute_time_t now = get_absolute_time();
+        const std::uint8_t raw = read_pressed_mask();
+        if (raw != raw_pressed_) {
+            raw_pressed_ = raw;
+            raw_changed_at_ = now;
+        }
+        if (raw_pressed_ == stable_pressed_ ||
+            absolute_time_diff_us(raw_changed_at_, now) < static_cast<std::int64_t>(KEY_DEBOUNCE_MS) * 1000) {
+            return Key::None;
+        }
+        const std::uint8_t pressed = raw_pressed_ & static_cast<std::uint8_t>(~stable_pressed_);
+        stable_pressed_ = raw_pressed_;
+        if (pressed & KEY_LEFT_MASK) return Key::Left;
+        if (pressed & KEY_CONFIRM_MASK) return Key::Confirm;
+        if (pressed & KEY_UP_MASK) return Key::Up;
+        if (pressed & KEY_DOWN_MASK) return Key::Down;
+        if (pressed & KEY_RIGHT_MASK) return Key::Right;
+        return Key::None;
+    }
+
+  private:
+    static std::uint8_t read_pressed_mask() {
+        std::uint8_t mask = 0;
+        if (!gpio_get(board::KEY_RIGHT_N)) mask |= KEY_RIGHT_MASK;
+        if (!gpio_get(board::KEY_DOWN_N)) mask |= KEY_DOWN_MASK;
+        if (!gpio_get(board::KEY_CONFIRM_N)) mask |= KEY_CONFIRM_MASK;
+        if (!gpio_get(board::KEY_LEFT_N)) mask |= KEY_LEFT_MASK;
+        if (!gpio_get(board::KEY_UP_N)) mask |= KEY_UP_MASK;
+        return mask;
+    }
+
+    std::uint8_t raw_pressed_ = 0;
+    std::uint8_t stable_pressed_ = 0;
+    absolute_time_t raw_changed_at_{};
+};
+
+class Application {
+  public:
+    Application(const bool card_mounted, const config::FirmwareConfig& config)
+        : card_mounted_(card_mounted), palette_key_(config.display.palette_key),
+          backlight_percent_(config.display.backlight_percent),
+          rx_sample_delay_us_(config.m2.rx_sample_delay_us) {}
+
+    [[noreturn]] void run() {
+        storage_ready_ = card_mounted_ && store_.initialize();
+        display::ui::initialize();
+        display::init();
+        display::set_palette_key(palette_key_);
+        apply_initial_backlight();
+        render();
+        keys_.initialize();
+
+        multicore_launch_core1_with_stack(run_worker, worker_stack.data(), sizeof(worker_stack));
+        while (worker.mode() != gbp::terminal::Worker::Mode::Idle) tight_loop_contents();
+
+        absolute_time_t next_sram_report = make_timeout_time_ms(1000);
+        while (true) {
+            if (time_reached(next_sram_report)) {
+                report_sram_usage();
+                next_sram_report = make_timeout_time_ms(1000);
+            }
+            if (state_.mode() == Mode::M1) update_m1();
+            if (state_.mode() == Mode::M2) update_m2();
+            handle_key(keys_.poll());
+            render();
+            tight_loop_contents();
+        }
+    }
+
+  private:
+    void apply_initial_backlight() {
+        for (std::size_t key = 0; key < display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
+            if (display::BACKLIGHT_DUTY_PERCENT[key] == backlight_percent_) {
+                display::set_backlight_key(static_cast<std::uint8_t>(key));
+                return;
+            }
+        }
+        display::set_backlight(static_cast<float>(backlight_percent_));
+    }
+
+    void adjust_brightness(const int delta) {
+        if (delta < 0) {
+            for (std::size_t index = display::BACKLIGHT_DUTY_PERCENT.size(); index > 0; --index) {
+                const std::size_t key = index - 1;
+                const auto percent = display::BACKLIGHT_DUTY_PERCENT[key];
+                if (percent < backlight_percent_) {
+                    display::set_backlight_key(static_cast<std::uint8_t>(key));
+                    backlight_percent_ = percent;
+                    return;
+                }
+            }
+        } else {
+            for (std::size_t key = 0; key < display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
+                const auto percent = display::BACKLIGHT_DUTY_PERCENT[key];
+                if (percent > backlight_percent_) {
+                    display::set_backlight_key(static_cast<std::uint8_t>(key));
+                    backlight_percent_ = percent;
+                    return;
+                }
+            }
+        }
+    }
+
+    void adjust_palette(const int delta) {
+        const int next = static_cast<int>(palette_key_) + delta;
+        if (next >= 0 && next < static_cast<int>(display::PALETTE_COUNT) &&
+            display::set_palette_key(static_cast<std::uint8_t>(next))) {
+            palette_key_ = static_cast<std::uint8_t>(next);
+            dirty_ = true;
+        }
+    }
+
+    void enter_m1() {
+        if (!storage_ready_) {
+            menu_error_ = "SD CARD ERROR";
+            state_.menu_failed();
+            dirty_ = true;
+            return;
+        }
+        std::unique_ptr<gbp::terminal::M1State> next{new (std::nothrow) gbp::terminal::M1State};
+        if (!next) {
+            printf("ERROR: M1 buffer allocation failed\n");
+            menu_error_ = "M1 error";
+            state_.menu_failed();
+            dirty_ = true;
+            return;
+        }
+        m1_ = std::move(next);
+        drawn_m1_ = {};
+        frame_owned_ = false;
+        save_active_ = false;
+        leaving_m1_ = false;
+        confirmation_pending_ = false;
+        worker.start_receive(*m1_);
+        state_.enter_m1();
+        dirty_ = true;
+    }
+
+    void update_m1() {
+        if (!frame_owned_ && m1_->acquire_frame(active_frame_)) {
+            frame_owned_ = true;
+            frame_displayed_or_skipped_ = false;
+            save_active_ = store_.begin(active_frame_.data, active_frame_.size, active_frame_.print_control);
+            dirty_ = true;
+        }
+
+        const auto snapshot = m1_->snapshot();
+        if (confirmation_pending_ &&
+            (snapshot.view != gbp::terminal::ViewState::Preview ||
+             snapshot.generation != confirmation_generation_)) {
+            confirmation_pending_ = false;
+        }
+        if (frame_owned_ && (snapshot.view != gbp::terminal::ViewState::Preview ||
+                             snapshot.generation != active_frame_.generation || confirmation_pending_ ||
+                             leaving_m1_)) {
+            frame_displayed_or_skipped_ = true;
+        }
+        if (snapshot.view != drawn_m1_.view ||
+            (snapshot.view == gbp::terminal::ViewState::Receiving && snapshot.frames != drawn_m1_.frames) ||
+            (snapshot.view == gbp::terminal::ViewState::Preview &&
+             snapshot.generation != drawn_m1_.generation)) {
+            dirty_ = true;
+        }
+
+        if (save_active_) {
+            const auto result = store_.step();
+            if (result == storage::GbpStore::StepResult::Complete ||
+                result == storage::GbpStore::StepResult::Error) {
+                save_active_ = false;
+            }
+        }
+        if (frame_owned_ && !save_active_ && frame_displayed_or_skipped_) {
+            m1_->release_frame();
+            frame_owned_ = false;
+        }
+        if (leaving_m1_ && worker.mode() == gbp::terminal::Worker::Mode::Idle &&
+            !frame_owned_ && !save_active_) {
+            m1_.reset();
+            leaving_m1_ = false;
+            state_.exit_m1();
+            dirty_ = true;
+        }
+    }
+
+    void enter_m2() {
+        const bool catalog_ok = card_mounted_ && catalog_.refresh();
+        state_.enter_m2(catalog_ok ? catalog_.count() : 0);
+        if (!catalog_ok) {
+            error_text_ = card_mounted_ ? "GBR error" : "SD CARD ERROR";
+            state_.file_failed();
+        }
+        dirty_ = true;
+    }
+
+    void update_m2() {
+        if (state_.m2_page() != M2Page::Printing) return;
+        const auto progress = worker.print_progress();
+        if (progress != drawn_print_progress_) dirty_ = true;
+        const auto result = worker.print_result();
+        if (result == gbp::host::PrintResult::None || worker.mode() != gbp::terminal::Worker::Mode::Idle) return;
+        if (result != gbp::host::PrintResult::Success) {
+            printf("ERROR: printer job failed: %s (%u), bytes sent=%lu/%lu\n",
+                   gbp::host::print_result_name(result), static_cast<unsigned>(result),
+                   static_cast<unsigned long>(progress), static_cast<unsigned long>(image_.size()));
+            error_text_ = "Print error";
+        }
+        image_.clear();
+        state_.print_finished(result == gbp::host::PrintResult::Success);
+        dirty_ = true;
+    }
+
+    void handle_key(const Key key) {
+        if (key == Key::None || leaving_m1_) return;
+        const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
+        const Action action = state_.on_key(key, snapshot.view == gbp::terminal::ViewState::Waiting,
+                                            snapshot.view == gbp::terminal::ViewState::Preview &&
+                                                !confirmation_pending_);
+        switch (action) {
+            case Action::None: break;
+            case Action::Redraw: dirty_ = true; break;
+            case Action::BrightnessDown: adjust_brightness(-1); break;
+            case Action::BrightnessUp: adjust_brightness(1); break;
+            case Action::PaletteDown: adjust_palette(-1); break;
+            case Action::PaletteUp: adjust_palette(1); break;
+            case Action::EnterM1: enter_m1(); break;
+            case Action::ExitM1:
+                leaving_m1_ = true;
+                worker.stop_receive();
+                break;
+            case Action::EnterM2: enter_m2(); break;
+            case Action::ExitM2:
+                image_.clear();
+                catalog_.clear();
+                state_.exit_m2();
+                dirty_ = true;
+                break;
+            case Action::ConfirmM1Preview:
+                confirmation_pending_ = true;
+                confirmation_generation_ = snapshot.generation;
+                m1_->request_confirmation(snapshot.generation);
+                break;
+            case Action::OpenFile: {
+                char filename[storage::GBR_NAME_CAPACITY]{};
+                if (catalog_.name_at(state_.selected_file(), filename, sizeof(filename)) && image_.load(filename)) {
+                    printf("M2 opened %s bytes=%lu\n", filename, static_cast<unsigned long>(image_.size()));
+                    state_.file_opened();
+                } else {
+                    error_text_ = "GBR error";
+                    state_.file_failed();
+                }
+                dirty_ = true;
+                break;
+            }
+            case Action::CloseFile:
+                image_.clear();
+                state_.file_closed();
+                dirty_ = true;
+                break;
+            case Action::StartPrint:
+                if (worker.mode() == gbp::terminal::Worker::Mode::Idle) {
+                    worker.start_print(image_.data(), image_.size(), image_.print_control(),
+                                       rx_sample_delay_us_);
+                    state_.print_started();
+                    drawn_print_progress_ = 0;
+                    dirty_ = true;
+                }
+                break;
+        }
+    }
+
+    bool draw_m1(const gbp::terminal::M1State::Snapshot& snapshot) {
+        switch (snapshot.view) {
+            case gbp::terminal::ViewState::Waiting: return gbp::terminal::draw_waiting();
+            case gbp::terminal::ViewState::Receiving: return gbp::terminal::draw_receiving(snapshot.frames);
+            case gbp::terminal::ViewState::Preview:
+                if (confirmation_pending_) return false;
+                if (frame_owned_ && active_frame_.generation == snapshot.generation) {
+                    gbp::terminal::draw_preview(active_frame_.data, active_frame_.size, active_frame_.palette);
+                    return true;
+                }
+                return drawn_mode_ == Mode::M1 && drawn_m1_.view == gbp::terminal::ViewState::Preview &&
+                       drawn_m1_.generation == snapshot.generation;
+        }
+        return false;
+    }
+
+    bool draw_screen(const gbp::terminal::M1State::Snapshot& snapshot) {
+        switch (state_.mode()) {
+            case Mode::Menu:
+                return state_.menu_page() == MenuPage::Error ? screen::draw_error(menu_error_) :
+                    screen::draw_menu(state_.menu_selection());
+            case Mode::M1: return draw_m1(snapshot);
+            case Mode::M2:
+                switch (state_.m2_page()) {
+                    case M2Page::List: return screen::draw_file_list(catalog_, state_.selected_file());
+                    case M2Page::Preview:
+                        gbp::terminal::draw_preview(image_.data(), image_.size(),
+                                                    gbp::format::preview_palette(image_.palette()));
+                        return true;
+                    case M2Page::Printing: return screen::draw_printing(worker.print_progress(), image_.size());
+                    case M2Page::Error: return screen::draw_error(error_text_);
+                }
+        }
+        return false;
+    }
+
+    void render() {
+        if (!dirty_ || display::is_presenting()) return;
+        const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
+        if (!draw_screen(snapshot) || !display::present()) return;
+        drawn_mode_ = state_.mode();
+        if (drawn_mode_ == Mode::M1) {
+            drawn_m1_ = snapshot;
+            if (snapshot.view == gbp::terminal::ViewState::Preview && frame_owned_ &&
+                active_frame_.generation == snapshot.generation) {
+                frame_displayed_or_skipped_ = true;
+            }
+        }
+        if (drawn_mode_ == Mode::M2 && state_.m2_page() == M2Page::Printing) {
+            drawn_print_progress_ = worker.print_progress();
+        }
+        dirty_ = false;
+    }
+
+    bool card_mounted_ = false;
+    bool storage_ready_ = false;
+    std::uint8_t palette_key_ = display::WHITE_PALETTE_KEY;
+    std::uint8_t backlight_percent_ = 50;
+    std::uint8_t rx_sample_delay_us_ = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
+    StateMachine state_{};
+    KeyScanner keys_{};
+    storage::GbpStore store_{};
+    storage::GbrCatalog catalog_{};
+    storage::GbrImage image_{};
+    std::unique_ptr<gbp::terminal::M1State> m1_{};
+    gbp::terminal::M1State::Frame active_frame_{};
+    gbp::terminal::M1State::Snapshot drawn_m1_{};
+    Mode drawn_mode_ = Mode::Menu;
+    std::string_view menu_error_ = "SD CARD ERROR";
+    std::string_view error_text_ = "GBR error";
+    std::size_t drawn_print_progress_ = 0;
+    std::uint32_t confirmation_generation_ = 0;
+    bool frame_owned_ = false;
+    bool frame_displayed_or_skipped_ = false;
+    bool save_active_ = false;
+    bool leaving_m1_ = false;
+    bool confirmation_pending_ = false;
+    bool dirty_ = true;
+};
+
+}  // namespace
+
+void run(const bool card_mounted, const config::FirmwareConfig& firmware_config) {
+    Application application(card_mounted, firmware_config);
+    application.run();
+}
+
+}  // namespace app

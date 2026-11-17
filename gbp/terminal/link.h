@@ -17,6 +17,7 @@ namespace gbp::terminal {
 class Link {
   public:
     void initialize();
+    void stop();
     bool poll(Receiver& receiver);
     void set_buffer_full(bool full);
 

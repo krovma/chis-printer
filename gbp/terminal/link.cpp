@@ -34,6 +34,16 @@ void Link::initialize() {
     irq_set_priority(IO_IRQ_BANK0, 0x40);
 }
 
+void Link::stop() {
+    gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
+    active_link = nullptr;
+    reset_wire();
+    read_index_.store(0, std::memory_order_relaxed);
+    write_index_.store(0, std::memory_order_relaxed);
+    gpio_set_dir(board::LINK_CLOCK, GPIO_IN);
+    gpio_put(board::LINK_DATA_OUT, true);
+}
+
 void Link::gpio_irq(const unsigned int gpio, const std::uint32_t events) {
     if (active_link != nullptr && gpio == board::LINK_CLOCK && (events & GPIO_IRQ_EDGE_RISE) != 0) {
         active_link->on_rising_clock();

@@ -141,14 +141,7 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
                 return false;
             }
             print_control_ = pending_print_control_;
-            palette_ = print_control_[2];
-            if (palette_ == 0) {
-                palette_ = 0xE4;
-            } else if (palette_ == 0xE1) {
-                palette_ = 0xD2;
-            } else if (palette_ == 0x2D) {
-                palette_ = 0x1E;
-            }
+            palette_ = format::preview_palette(print_control_[2]);
             state_ = ViewState::Preview;
             buffer_full_ = true;
             return true;

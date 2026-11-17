@@ -106,8 +106,14 @@ add_custom_target(generate_font_header DEPENDS ${FONT_HEADER})
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(kuper-printer
-    config/display_config.cpp
-    config/display_config.h
+    app/application.cpp
+    app/application.h
+    app/screen.cpp
+    app/screen.h
+    app/state_machine.cpp
+    app/state_machine.h
+    config/firmware_config.cpp
+    config/firmware_config.h
     display/palette.h
     display/ui/screen.cpp
     display/ui/screen.h
@@ -122,6 +128,11 @@ add_executable(kuper-printer
     gbp/protocol/rle.cpp
     gbp/protocol/rle.h
     gbp/format/gbr.h
+    gbp/host/gpio_transport.cpp
+    gbp/host/gpio_transport.h
+    gbp/host/link_timing.h
+    gbp/host/print_job.cpp
+    gbp/host/print_job.h
     gbp/terminal/link.cpp
     gbp/terminal/link.h
     gbp/terminal/m1_state.cpp
@@ -132,6 +143,8 @@ add_executable(kuper-printer
     gbp/terminal/receiver.h
     gbp/terminal/screen.cpp
     gbp/terminal/screen.h
+    gbp/terminal/worker.cpp
+    gbp/terminal/worker.h
     main.cpp
     pin_config.h
     ${FONT_HEADER}
@@ -139,6 +152,8 @@ add_executable(kuper-printer
     resource/text/display_texts.h
     storage/sd_card.cpp
     storage/sd_card.h
+    storage/gbr_library.cpp
+    storage/gbr_library.h
     storage/gbr_filename.h
     storage/gbp_store.cpp
     storage/gbp_store.h
