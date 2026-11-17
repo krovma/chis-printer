@@ -5,13 +5,17 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
+#include "gbp/format/gbr.h"
 #include "gbp/protocol/packet.h"
 #include "gbp/protocol/packet_writer.h"
 #include "gbp/protocol/rle.h"
 #include "gbp/terminal/printer_session.h"
+#include "gbp/terminal/m1_state.h"
 #include "gbp/terminal/receiver.h"
+#include "storage/gbr_filename.h"
 
 namespace {
 
@@ -42,6 +46,14 @@ std::vector<std::uint8_t> packet(const gbp::protocol::Command command,
 void send(gbp::terminal::Receiver& receiver, const std::vector<std::uint8_t>& bytes) {
     for (const auto byte : bytes) {
         receiver.feed(byte);
+    }
+}
+
+void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes) {
+    for (const auto byte : bytes) {
+        if (state.receiver().feed(byte)) {
+            state.core1_on_receiver_change();
+        }
     }
 }
 
@@ -77,7 +89,8 @@ int main() {
     assert(gbp::protocol::write_packet(Command::Print, false, print_options, 4,
                                        encoded.data(), 13) == 0);
 
-    gbp::terminal::Receiver receiver;
+    static gbp::terminal::ImageBuffer image{};
+    gbp::terminal::Receiver receiver(image);
     assert(receiver.state() == gbp::terminal::ViewState::Waiting);
 
     send(receiver, packet(Command::Init, 0, {}));
@@ -88,6 +101,55 @@ int main() {
     tile_row[1] = 0x00;
     send(receiver, packet(Command::Data, 0, tile_row, true));
     assert(receiver.data_frames() == 0);
+
+    const auto header = gbp::format::make_gbr_header(160, 16);
+    const std::array<std::uint8_t, 8> expected_header{'K', 'G', 'B', 'R', 1, 160, 16, 0};
+    assert(header == expected_header);
+
+    std::uint64_t file_number = 0;
+    assert(storage::parse_gbr_filename("00099.GBR", file_number) && file_number == 99);
+    assert(storage::parse_gbr_filename("100000.gbr", file_number) && file_number == 100000);
+    assert(!storage::parse_gbr_filename("1234.gbr", file_number));
+    assert(!storage::parse_gbr_filename("123ab.gbr", file_number));
+    assert(!storage::parse_gbr_filename("99999.gbp", file_number));
+    char path[40]{};
+    assert(storage::format_gbr_path(100000, path, sizeof(path)));
+    assert(std::strcmp(path, "0:/DCIM/100000.gbr") == 0);
+
+    static gbp::terminal::M1State m1;
+    send(m1, packet(Command::Init, 0, {}));
+    send(m1, packet(Command::Data, 0, tile_row));
+    send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
+    assert(m1.receiver().state() == gbp::terminal::ViewState::Waiting);
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
+    gbp::terminal::M1State::Frame first{};
+    assert(m1.acquire_frame(first));
+    assert(first.size == 320 && first.data[0] == 0x80);
+
+    send(m1, packet(Command::Inquiry, 0, {}));
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
+    send(m1, packet(Command::Init, 0, {}));
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Receiving);
+    send(m1, packet(Command::Data, 0, tile_row));
+    send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Waiting);
+    gbp::terminal::M1State::Frame discarded{};
+    assert(!m1.acquire_frame(discarded));
+
+    m1.release_frame();
+    send(m1, packet(Command::Init, 0, {}));
+    send(m1, packet(Command::Data, 0, tile_row));
+    send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
+    gbp::terminal::M1State::Frame second{};
+    assert(m1.acquire_frame(second));
+    assert(second.data != first.data && second.generation == first.generation + 1);
+    m1.request_confirmation(first.generation);
+    m1.core1_process_confirmation();
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
+    m1.request_confirmation(second.generation);
+    m1.core1_process_confirmation();
+    assert(m1.snapshot().view == gbp::terminal::ViewState::Waiting);
+    m1.release_frame();
     assert(receiver.image_size() == 0);
 
     send(receiver, packet(Command::Data, 0, tile_row));

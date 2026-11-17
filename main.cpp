@@ -25,6 +25,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include "hardware/regs/addressmap.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 
@@ -33,12 +34,24 @@
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
 #include "gbp/terminal/link.h"
+#include "gbp/terminal/m1_state.h"
 #include "gbp/terminal/screen.h"
 #include "pin_config.h"
+#include "storage/gbp_store.h"
 #include "storage/sd_card.h"
 
 #if KP_UNIT_TEST_LCD_0
 #include "unit_test/lcd_0.h"
+#endif
+
+#if !KP_UNIT_TEST_LCD_0
+extern "C" {
+extern char __end__;
+extern char __StackLimit;
+extern char __StackBottom;
+extern char __StackTop;
+void* _sbrk(int increment);
+}
 #endif
 
 namespace {
@@ -57,13 +70,13 @@ constexpr std::uint8_t KEY_UP_MASK      = 1u << 4;
 
 std::uint8_t current_palette_key = display::WHITE_PALETTE_KEY;
 std::uint8_t current_backlight_percent = display::BACKLIGHT_DUTY_PERCENT[display::DEFAULT_BACKLIGHT_KEY];
-gbp::terminal::Receiver receiver;
+#if !KP_UNIT_TEST_LCD_0
+gbp::terminal::M1State m1_state;
 gbp::terminal::Link link;
+storage::GbpStore gbp_store;
 std::atomic<bool> sd_ready{false};
-std::atomic<bool> preview_confirm_requested{false};
-std::atomic<std::uint32_t> visible_state{static_cast<std::uint32_t>(gbp::terminal::ViewState::Waiting)};
-std::atomic<std::uint32_t> visible_frames{0};
 alignas(8) std::array<std::uint32_t, 1024> link_core_stack{};
+#endif
 
 class FiveWayKeyScanner {
   public:
@@ -230,34 +243,51 @@ void apply_initial_backlight(const std::uint8_t percent) {
 }
 
 #if !KP_UNIT_TEST_LCD_0
+void report_sram_usage() {
+    const auto ram_start = static_cast<std::uintptr_t>(SRAM_BASE);
+    const auto ram_end = reinterpret_cast<std::uintptr_t>(&__StackLimit);
+    const auto static_end = reinterpret_cast<std::uintptr_t>(&__end__);
+    const auto heap_end = reinterpret_cast<std::uintptr_t>(_sbrk(0));
+    const auto stack_bottom = reinterpret_cast<std::uintptr_t>(&__StackBottom);
+    const auto stack_top = reinterpret_cast<std::uintptr_t>(&__StackTop);
+    std::uintptr_t stack_pointer = 0;
+    __asm volatile("mov %0, sp" : "=r"(stack_pointer));
+
+    const auto main_used = heap_end - ram_start;
+    const auto main_free = heap_end <= ram_end ? ram_end - heap_end : 0;
+    const auto core0_stack_used = stack_top - stack_pointer;
+    printf("SRAM main=%lu/%lu free=%lu static=%lu heap=%lu core0_stack=%lu/%lu B\n",
+           static_cast<unsigned long>(main_used), static_cast<unsigned long>(ram_end - ram_start),
+           static_cast<unsigned long>(main_free), static_cast<unsigned long>(static_end - ram_start),
+           static_cast<unsigned long>(heap_end - static_end), static_cast<unsigned long>(core0_stack_used),
+           static_cast<unsigned long>(stack_top - stack_bottom));
+}
+
 void run_link_core() {
     link.initialize();
     while (true) {
-        if (preview_confirm_requested.load(std::memory_order_acquire)) {
-            receiver.confirm_preview();
-            link.set_buffer_full(false);
-            visible_frames.store(0, std::memory_order_release);
-            visible_state.store(static_cast<std::uint32_t>(gbp::terminal::ViewState::Waiting),
-                                std::memory_order_release);
-            preview_confirm_requested.store(false, std::memory_order_release);
-        }
-        if (link.poll(receiver)) {
-            visible_frames.store(receiver.data_frames(), std::memory_order_release);
-            visible_state.store(static_cast<std::uint32_t>(receiver.state()), std::memory_order_release);
+        m1_state.core1_process_confirmation();
+        if (link.poll(m1_state.receiver())) {
+            m1_state.core1_on_receiver_change();
+            link.set_buffer_full(m1_state.receiver().buffer_full());
         }
         tight_loop_contents();
     }
 }
 
-bool draw_m1_state(const gbp::terminal::ViewState state, const std::uint32_t frames) {
+bool draw_m1_state(const gbp::terminal::ViewState state, const std::uint32_t frames,
+                   const gbp::terminal::M1State::Frame* preview) {
     switch (state) {
         case gbp::terminal::ViewState::Waiting:
             return gbp::terminal::draw_waiting();
         case gbp::terminal::ViewState::Receiving:
             return gbp::terminal::draw_receiving(frames);
         case gbp::terminal::ViewState::Preview:
-            gbp::terminal::draw_preview(receiver);
-            return true;
+            if (preview != nullptr) {
+                gbp::terminal::draw_preview(preview->data, preview->size, preview->palette);
+                return true;
+            }
+            return false;
     }
     return false;
 }
@@ -286,15 +316,41 @@ void run_ui_core() {
 
     gbp::terminal::ViewState drawn_state = gbp::terminal::ViewState::Waiting;
     std::uint32_t drawn_frames = 0;
+    std::uint32_t drawn_generation = 0;
     bool confirmation_pending = false;
+    std::uint32_t confirmation_generation = 0;
+    gbp::terminal::M1State::Frame active_frame{};
+    bool frame_owned = false;
+    bool frame_displayed_or_skipped = false;
+    bool save_active = false;
+    absolute_time_t next_sram_report = make_timeout_time_ms(100);
     while (true) {
-        const auto state = static_cast<gbp::terminal::ViewState>(visible_state.load(std::memory_order_acquire));
-        const std::uint32_t frames = visible_frames.load(std::memory_order_acquire);
-        if (confirmation_pending && state != gbp::terminal::ViewState::Preview) {
+        if (time_reached(next_sram_report)) {
+            report_sram_usage();
+            next_sram_report = make_timeout_time_ms(100);
+        }
+        if (card_ready && !frame_owned && m1_state.acquire_frame(active_frame)) {
+            frame_owned = true;
+            frame_displayed_or_skipped = false;
+            save_active = gbp_store.begin(active_frame.data, active_frame.size);
+            screen_dirty = true;
+        }
+
+        const auto snapshot = m1_state.snapshot();
+        const auto state = snapshot.view;
+        const std::uint32_t frames = snapshot.frames;
+        const std::uint32_t generation = snapshot.generation;
+        if (confirmation_pending &&
+            (state != gbp::terminal::ViewState::Preview || generation != confirmation_generation)) {
             confirmation_pending = false;
         }
+        if (frame_owned && (state != gbp::terminal::ViewState::Preview ||
+                            generation != active_frame.generation || confirmation_pending)) {
+            frame_displayed_or_skipped = true;
+        }
         if (card_ready && (state != drawn_state ||
-                           (state == gbp::terminal::ViewState::Receiving && frames != drawn_frames))) {
+                           (state == gbp::terminal::ViewState::Receiving && frames != drawn_frames) ||
+                           (state == gbp::terminal::ViewState::Preview && generation != drawn_generation))) {
             screen_dirty = true;
         }
 
@@ -308,7 +364,8 @@ void run_ui_core() {
             }
             if ((pressed_keys & KEY_CONFIRM_MASK) != 0 && state == gbp::terminal::ViewState::Preview) {
                 confirmation_pending = true;
-                preview_confirm_requested.store(true, std::memory_order_release);
+                confirmation_generation = generation;
+                m1_state.request_confirmation(generation);
             }
             if ((pressed_keys & KEY_LEFT_MASK) != 0) {
                 adjust_backlight(-1);
@@ -319,16 +376,39 @@ void run_ui_core() {
         }
 
         if (screen_dirty && !display::is_presenting()) {
-            const auto next_state = static_cast<gbp::terminal::ViewState>(visible_state.load(std::memory_order_acquire));
-            const std::uint32_t next_frames = visible_frames.load(std::memory_order_acquire);
+            const auto next_snapshot = m1_state.snapshot();
+            const auto next_state = next_snapshot.view;
+            const std::uint32_t next_frames = next_snapshot.frames;
+            const std::uint32_t next_generation = next_snapshot.generation;
             if (next_state != gbp::terminal::ViewState::Preview || !confirmation_pending) {
-                const bool rendered = card_ready ? draw_m1_state(next_state, next_frames) : draw_sd_error();
+                const auto* preview = frame_owned && active_frame.generation == next_generation ? &active_frame : nullptr;
+                const bool reuse_preview = next_state == gbp::terminal::ViewState::Preview && preview == nullptr &&
+                                           drawn_state == gbp::terminal::ViewState::Preview &&
+                                           drawn_generation == next_generation;
+                const bool rendered = card_ready ?
+                    (reuse_preview || draw_m1_state(next_state, next_frames, preview)) : draw_sd_error();
                 if (rendered && display::present()) {
                     drawn_state = next_state;
                     drawn_frames = next_frames;
+                    drawn_generation = next_generation;
+                    if (next_state == gbp::terminal::ViewState::Preview && preview != nullptr) {
+                        frame_displayed_or_skipped = true;
+                    }
                     screen_dirty = false;
                 }
             }
+        }
+
+        if (save_active) {
+            const auto result = gbp_store.step();
+            if (result == storage::GbpStore::StepResult::Complete ||
+                result == storage::GbpStore::StepResult::Error) {
+                save_active = false;
+            }
+        }
+        if (frame_owned && !save_active && frame_displayed_or_skipped) {
+            m1_state.release_frame();
+            frame_owned = false;
         }
         tight_loop_contents();
     }
@@ -351,11 +431,12 @@ int main() {
     }
 #else
     sleep_ms(SD_READY_DELAY_MS);
-    const bool card_ready = storage::mount_initialized_card();
+    const bool mounted = storage::mount_initialized_card();
     config::DisplayConfig display_config;
-    if (card_ready && !storage::load_display_config(display_config)) {
+    if (mounted && !storage::load_display_config(display_config)) {
         printf("Using default display settings\n");
     }
+    const bool card_ready = mounted && gbp_store.initialize();
     current_palette_key = display_config.palette_key;
     current_backlight_percent = display_config.backlight_percent;
     sd_ready.store(card_ready, std::memory_order_release);

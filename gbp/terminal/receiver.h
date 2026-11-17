@@ -14,21 +14,25 @@ namespace gbp::terminal {
 
 inline constexpr std::size_t IMAGE_CAPACITY = 640 * 192;
 inline constexpr std::size_t BYTES_PER_TILE_ROW = 20 * 16;
+using ImageBuffer = std::array<std::uint8_t, IMAGE_CAPACITY>;
 
 enum class ViewState : std::uint8_t { Waiting, Receiving, Preview };
 
 class Receiver {
   public:
+    explicit Receiver(ImageBuffer& image) : image_(image.data()) {}
+
     // Returns true when the screen content needs to be redrawn.
     bool feed(std::uint8_t byte);
     void abort_packet();
     void reset();
     void confirm_preview();
+    void use_buffer(ImageBuffer& image);
 
     ViewState state() const { return state_; }
     std::uint32_t data_frames() const { return data_frames_; }
     std::size_t image_size() const { return image_size_; }
-    const std::uint8_t* image_data() const { return image_.data(); }
+    const std::uint8_t* image_data() const { return image_; }
     std::uint8_t palette() const { return palette_; }
     bool buffer_full() const { return buffer_full_; }
 
@@ -39,7 +43,7 @@ class Receiver {
 
     protocol::PacketParser parser_{};
     protocol::RleDecoder decoder_{};
-    std::array<std::uint8_t, IMAGE_CAPACITY> image_{};
+    std::uint8_t* image_ = nullptr;
     ViewState state_ = ViewState::Waiting;
     std::size_t image_size_ = 0;
     std::size_t packet_start_size_ = 0;

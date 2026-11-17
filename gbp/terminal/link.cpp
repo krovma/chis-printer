@@ -124,7 +124,10 @@ bool Link::poll(Receiver& receiver) {
 
     std::uint8_t byte = 0;
     while (dequeue(byte)) {
-        changed |= receiver.feed(byte);
+        if (receiver.feed(byte)) {
+            changed = true;
+            break;
+        }
     }
     set_buffer_full(receiver.buffer_full());
 

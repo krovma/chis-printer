@@ -5,3 +5,6 @@ Agent.md
 agent-output
 resource/font/generated_font.h
 resource/icon/generated_icons.h
+/resource/kgbr/*
+!/resource/kgbr/gbr-to-png.py
+!/resource/kgbr/requirements.txt

@@ -121,8 +121,11 @@ add_executable(kuper-printer
     gbp/protocol/packet_writer.h
     gbp/protocol/rle.cpp
     gbp/protocol/rle.h
+    gbp/format/gbr.h
     gbp/terminal/link.cpp
     gbp/terminal/link.h
+    gbp/terminal/m1_state.cpp
+    gbp/terminal/m1_state.h
     gbp/terminal/printer_session.cpp
     gbp/terminal/printer_session.h
     gbp/terminal/receiver.cpp
@@ -136,6 +139,9 @@ add_executable(kuper-printer
     resource/text/display_texts.h
     storage/sd_card.cpp
     storage/sd_card.h
+    storage/gbr_filename.h
+    storage/gbp_store.cpp
+    storage/gbp_store.h
     third_party/i18n_keyval/include/i18n_keyval/i18n.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/api.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/common.hpp

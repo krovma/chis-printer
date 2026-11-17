@@ -14,14 +14,15 @@ bool Receiver::feed(const std::uint8_t byte) {
     }
 
     switch (result.event) {
-        case protocol::Event::Sync:
-            if (state_ == ViewState::Waiting) {
+        case protocol::Event::PacketStart:
+            begin_packet(result.header);
+            if (state_ == ViewState::Waiting &&
+                (result.header.command == static_cast<std::uint8_t>(protocol::Command::Init) ||
+                 (result.header.command == static_cast<std::uint8_t>(protocol::Command::Data) &&
+                  result.header.length != 0))) {
                 state_ = ViewState::Receiving;
                 return true;
             }
-            break;
-        case protocol::Event::PacketStart:
-            begin_packet(result.header);
             break;
         case protocol::Event::PayloadByte:
             consume_payload(result.header, result.payload);
@@ -66,6 +67,11 @@ void Receiver::confirm_preview() {
     }
 }
 
+void Receiver::use_buffer(ImageBuffer& image) {
+    image_ = image.data();
+    reset();
+}
+
 void Receiver::begin_packet(const protocol::Header& header) {
     packet_start_size_ = image_size_;
     packet_open_ = true;
@@ -92,12 +98,12 @@ void Receiver::consume_payload(const protocol::Header& header, const std::uint8_
 
     std::uint8_t decoded[129];
     const std::size_t count = decoder_.feed(byte, decoded);
-    if (count > image_.size() - image_size_) {
+    if (count > IMAGE_CAPACITY - image_size_) {
         packet_failed_ = true;
         packet_overflow_ = true;
         return;
     }
-    std::copy_n(decoded, count, image_.data() + image_size_);
+    std::copy_n(decoded, count, image_ + image_size_);
     image_size_ += count;
 }
 
@@ -129,7 +135,8 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
             ++data_frames_;
             return true;
         case protocol::Command::Print:
-            if (packet.header.length < 4 || image_size_ < BYTES_PER_TILE_ROW) {
+            if (packet.header.length < 4 || image_size_ < BYTES_PER_TILE_ROW ||
+                image_size_ % BYTES_PER_TILE_ROW != 0) {
                 return false;
             }
             palette_ = pending_palette_;
