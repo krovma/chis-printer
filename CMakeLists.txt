@@ -112,8 +112,13 @@ add_executable(kuper-printer
     app/screen.h
     app/state_machine.cpp
     app/state_machine.h
+    bt/bluetooth_printer.cpp
+    bt/bluetooth_printer.h
+    btstack_config.h
     config/firmware_config.cpp
     config/firmware_config.h
+    m3/escpos.cpp
+    m3/escpos.h
     display/palette.h
     display/ui/screen.cpp
     display/ui/screen.h
@@ -180,6 +185,13 @@ else()
     target_compile_definitions(kuper-printer PRIVATE KP_UNIT_TEST_LCD_0=0)
 endif()
 
+# Service CYW43/BTstack from the main loop instead of a continuously pending
+# background IRQ. Bound HCI work per poll so the display and keys stay live.
+target_compile_definitions(kuper-printer PRIVATE
+    CYW43_LWIP=0
+    PICO_BTSTACK_CYW43_MAX_HCI_PROCESS_LOOP_COUNT=16
+)
+
 pico_set_program_name(kuper-printer "kuper-printer")
 pico_set_program_version(kuper-printer "0.1")
 
@@ -192,8 +204,12 @@ pico_enable_stdio_rtt(kuper-printer 1)
 target_link_libraries(kuper-printer
     pico_stdlib
     pico_multicore
+    pico_flash
     pico_fatfs
     tomlc17
+    pico_btstack_classic
+    pico_btstack_cyw43
+    pico_cyw43_arch_poll
 )
 
 # Add the standard include files to the build

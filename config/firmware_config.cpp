@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cctype>
 #include <string_view>
 
 #include "tomlc17.h"
@@ -18,6 +19,41 @@ namespace {
 constexpr std::array<std::string_view, display::PALETTE_COUNT> PALETTE_NAMES{
     "red", "yellow", "green", "cyan", "blue", "magenta", "white",
 };
+
+int hex_digit(const char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+bool parse_mac(const toml_datum_t datum, std::array<std::uint8_t, 6>& output) {
+    if (datum.type != TOML_STRING || datum.u.str.len != 17) return false;
+    const std::string_view text{datum.u.str.ptr, static_cast<std::size_t>(datum.u.str.len)};
+    for (std::size_t index = 0; index < output.size(); ++index) {
+        const std::size_t offset = index * 3;
+        if (index != 0 && text[offset - 1] != ':' && text[offset - 1] != '-') return false;
+        const int high = hex_digit(text[offset]);
+        const int low = hex_digit(text[offset + 1]);
+        if (high < 0 || low < 0) return false;
+        output[index] = static_cast<std::uint8_t>((high << 4) | low);
+    }
+    return true;
+}
+
+template <std::size_t N>
+bool copy_text(const toml_datum_t datum, std::array<char, N>& output) {
+    if (datum.type != TOML_STRING || datum.u.str.len <= 0 ||
+        static_cast<std::size_t>(datum.u.str.len) >= output.size()) return false;
+    const std::size_t length = static_cast<std::size_t>(datum.u.str.len);
+    for (std::size_t index = 0; index < length; ++index) {
+        const unsigned char value = static_cast<unsigned char>(datum.u.str.ptr[index]);
+        if (value < 0x20 || value == 0x7f) return false;
+        output[index] = static_cast<char>(value);
+    }
+    output[length] = '\0';
+    return true;
+}
 
 }  // namespace
 
@@ -39,6 +75,10 @@ bool parse_firmware_config(const std::string_view contents, FirmwareConfig& outp
     const toml_datum_t auto_cut = toml_seek(document.toptab, "M1.AutoCutTimeLimit");
     const toml_datum_t m2 = toml_get(document.toptab, "m2");
     const toml_datum_t rx_delay = toml_seek(document.toptab, "m2.rx_sample_delay_us");
+    const toml_datum_t m3 = toml_get(document.toptab, "m3");
+    const toml_datum_t printer_name = toml_seek(document.toptab, "m3.printer_name");
+    const toml_datum_t pin = toml_seek(document.toptab, "m3.pin");
+    const toml_datum_t mac = toml_seek(document.toptab, "m3.mac");
 
     bool valid = version.type == TOML_INT64 && version.u.int64 == 1 &&
                  palette.type == TOML_STRING && backlight.type == TOML_INT64 &&
@@ -76,6 +116,19 @@ bool parse_firmware_config(const std::string_view contents, FirmwareConfig& outp
             parsed.m1.auto_cut_time_limit_us = static_cast<std::uint32_t>(seconds * 1'000'000.0 + 0.5);
         } else if (m1.type != TOML_TABLE || auto_cut.type != TOML_UNKNOWN) {
             std::printf("config.toml M1.AutoCutTimeLimit invalid; using 1 s (allowed 0-60 s)\n");
+        }
+    }
+
+    if (valid && m3.type != TOML_UNKNOWN) {
+        M3Config parsed_m3{};
+        std::array<std::uint8_t, 6> parsed_mac{};
+        const bool m3_valid = m3.type == TOML_TABLE && copy_text(printer_name, parsed_m3.printer_name) &&
+                              copy_text(pin, parsed_m3.pin) && parse_mac(mac, parsed_mac);
+        if (m3_valid) {
+            parsed_m3.mac = parsed_mac;
+            parsed.m3 = parsed_m3;
+        } else {
+            std::printf("config.toml m3 printer settings invalid; using defaults\n");
         }
     }
 

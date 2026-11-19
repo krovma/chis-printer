@@ -14,11 +14,14 @@
 
 #include "hardware/gpio.h"
 #include "hardware/regs/addressmap.h"
+#include "pico/flash.h"
+#include "pico/cyw43_arch.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 
 #include "app/screen.h"
 #include "app/state_machine.h"
+#include "bt/bluetooth_printer.h"
 #include "display/ui/screen.h"
 #include "display/zjy154s0800.h"
 #include "gbr/format.h"
@@ -50,7 +53,12 @@ constexpr std::uint8_t KEY_UP_MASK = 1u << 4;
 gbp::terminal::Worker worker;
 alignas(8) std::array<std::uint32_t, 1024> worker_stack{};
 
-void run_worker() { worker.run(); }
+void run_worker() {
+    // BTstack persists pairing data in flash. Register Core 1 as a flash
+    // lockout victim before Worker::run publishes its Idle/ready state.
+    if (!flash_safe_execute_core_init()) panic("Core 1 flash safety init failed");
+    worker.run();
+}
 
 void report_sram_usage() {
     const auto ram_start = static_cast<std::uintptr_t>(SRAM_BASE);
@@ -123,7 +131,7 @@ class Application {
         : card_mounted_(card_mounted), palette_key_(config.display.palette_key),
           backlight_percent_(config.display.backlight_percent),
           auto_cut_time_limit_us_(config.m1.auto_cut_time_limit_us),
-          rx_sample_delay_us_(config.m2.rx_sample_delay_us) {}
+          rx_sample_delay_us_(config.m2.rx_sample_delay_us), m3_config_(config.m3) {}
 
     [[noreturn]] void run() {
         storage_ready_ = card_mounted_ && store_.initialize();
@@ -134,17 +142,35 @@ class Application {
         render();
         keys_.initialize();
 
-        multicore_launch_core1_with_stack(run_worker, worker_stack.data(), sizeof(worker_stack));
-        while (worker.mode() != gbp::terminal::Worker::Mode::Idle) tight_loop_contents();
-
         absolute_time_t next_sram_report = make_timeout_time_ms(1000);
+        absolute_time_t next_m3_report = make_timeout_time_ms(2000);
         while (true) {
+            if (bt_printer_.initialized()) cyw43_arch_poll();
             if (time_reached(next_sram_report)) {
                 report_sram_usage();
                 next_sram_report = make_timeout_time_ms(1000);
             }
+            bt::TraceEvent bt_event;
+            while (bt_printer_.pop_trace(bt_event)) {
+                printf("M3 BT event t=%lu %s a=0x%lx b=0x%lx\n",
+                       static_cast<unsigned long>(bt_event.uptime_ms), bt::trace_kind_name(bt_event.kind),
+                       static_cast<unsigned long>(bt_event.value), static_cast<unsigned long>(bt_event.extra));
+            }
+            if (time_reached(next_m3_report)) {
+                if (state_.mode() == Mode::M3) {
+                    printf("M3 alive t=%lu init=%u hci=%u status=%u page=%u sent=%lu/%lu drops=%lu\n",
+                           static_cast<unsigned long>(time_us_32() / 1000u),
+                           bt_printer_.initialized() ? 1u : 0u, bt_printer_.hci_ready() ? 1u : 0u,
+                           static_cast<unsigned>(bt_printer_.status()), static_cast<unsigned>(state_.m2_page()),
+                           static_cast<unsigned long>(bt_printer_.progress()),
+                           static_cast<unsigned long>(bt_printer_.total()),
+                           static_cast<unsigned long>(bt_printer_.trace_drops()));
+                }
+                next_m3_report = make_timeout_time_ms(2000);
+            }
             if (state_.mode() == Mode::M1) update_m1();
             if (state_.mode() == Mode::M2) update_m2();
+            if (state_.mode() == Mode::M3) update_m3();
             handle_key(keys_.poll());
             render();
             tight_loop_contents();
@@ -152,6 +178,18 @@ class Application {
     }
 
   private:
+    void ensure_worker_started() {
+        if (worker_started_) return;
+        // This lock is a no-op in polling mode, and keeps the Core 1 launch
+        // safe if CYW43 is later changed back to background servicing.
+        const bool bluetooth_active = bt_printer_.initialized();
+        if (bluetooth_active) cyw43_arch_lwip_begin();
+        multicore_launch_core1_with_stack(run_worker, worker_stack.data(), sizeof(worker_stack));
+        while (worker.mode() != gbp::terminal::Worker::Mode::Idle) tight_loop_contents();
+        worker_started_ = true;
+        if (bluetooth_active) cyw43_arch_lwip_end();
+    }
+
     void apply_initial_backlight() {
         for (std::size_t key = 0; key < display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
             if (display::BACKLIGHT_DUTY_PERCENT[key] == backlight_percent_) {
@@ -216,6 +254,7 @@ class Application {
         save_active_ = false;
         leaving_m1_ = false;
         confirmation_pending_ = false;
+        ensure_worker_started();
         worker.start_receive(*m1_);
         state_.enter_m1();
         dirty_ = true;
@@ -278,6 +317,27 @@ class Application {
         dirty_ = true;
     }
 
+    void enter_m3() {
+        printf("M3 enter: catalog begin t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
+        const bool catalog_ok = card_mounted_ && catalog_.refresh();
+        printf("M3 enter: catalog done ok=%u files=%lu\n", catalog_ok ? 1u : 0u,
+               static_cast<unsigned long>(catalog_ok ? catalog_.count() : 0));
+        printf("M3 enter: bluetooth init begin\n");
+        const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
+        printf("M3 enter: bluetooth init done ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
+               bt_printer_.hci_ready() ? 1u : 0u);
+        state_.enter_m3(catalog_ok ? catalog_.count() : 0);
+        if (!catalog_ok) {
+            error_text_ = card_mounted_ ? "GBR error" : "SD CARD ERROR";
+            state_.file_failed();
+        } else if (!bluetooth_ok) {
+            error_text_ = "BT error";
+            state_.file_failed();
+        }
+        dirty_ = true;
+        printf("M3 enter: state ready page=%u\n", static_cast<unsigned>(state_.m2_page()));
+    }
+
     void update_m2() {
         if (state_.m2_page() != M2Page::Printing) return;
         const auto progress = worker.print_progress();
@@ -312,6 +372,36 @@ class Application {
         dirty_ = true;
     }
 
+    void update_m3() {
+        if (state_.m2_page() != M2Page::Printing) return;
+        const auto status = bt_printer_.status();
+        if (status == bt::PrintStatus::Connecting || status == bt::PrintStatus::Printing) {
+            if (bt_printer_.progress() != drawn_print_progress_) dirty_ = true;
+            return;
+        }
+        if (status == bt::PrintStatus::Success) {
+            if (image_.block_index() + 1 < image_.block_count()) {
+                if (image_.next_block() &&
+                    bt_printer_.start(image_.data(), image_.size(), image_.palette(), false,
+                                      image_.block_index() + 1 == image_.block_count())) {
+                    dirty_ = true;
+                    return;
+                }
+                error_text_ = "GBR error";
+                image_.clear();
+                state_.print_finished(false);
+            } else {
+                image_.clear();
+                state_.print_finished(true);
+            }
+        } else if (status == bt::PrintStatus::Error) {
+            error_text_ = "BT print error";
+            image_.clear();
+            state_.print_finished(false);
+        }
+        dirty_ = true;
+    }
+
     void handle_key(const Key key) {
         if (key == Key::None || leaving_m1_) return;
         const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
@@ -331,10 +421,18 @@ class Application {
                 worker.stop_receive();
                 break;
             case Action::EnterM2: enter_m2(); break;
+            case Action::EnterM3: enter_m3(); break;
             case Action::ExitM2:
                 image_.clear();
                 catalog_.clear();
                 state_.exit_m2();
+                dirty_ = true;
+                break;
+            case Action::ExitM3:
+                bt_printer_.cancel();
+                image_.clear();
+                catalog_.clear();
+                state_.exit_m3();
                 dirty_ = true;
                 break;
             case Action::ConfirmM1Preview:
@@ -371,12 +469,24 @@ class Application {
                 dirty_ = true;
                 break;
             case Action::StartPrint:
-                if (worker.mode() == gbp::terminal::Worker::Mode::Idle) {
+                if (state_.mode() == Mode::M2) ensure_worker_started();
+                if (state_.mode() == Mode::M3 || worker.mode() == gbp::terminal::Worker::Mode::Idle) {
                     if (image_.select_block(0)) {
-                        printed_bytes_ = 0;
-                        start_m2_block();
-                        state_.print_started();
-                        drawn_print_progress_ = 0;
+                        if (state_.mode() == Mode::M3) {
+                            if (bt_printer_.start(image_.data(), image_.size(), image_.palette(), true,
+                                                  image_.block_count() == 1)) {
+                                state_.print_started();
+                                drawn_print_progress_ = 0;
+                            } else {
+                                error_text_ = "BT print error";
+                                state_.print_finished(false);
+                            }
+                        } else {
+                            printed_bytes_ = 0;
+                            start_m2_block();
+                            state_.print_started();
+                            drawn_print_progress_ = 0;
+                        }
                     } else {
                         printf("ERROR: GBR first block read failed\n");
                         image_.clear();
@@ -385,6 +495,12 @@ class Application {
                     }
                     dirty_ = true;
                 }
+                break;
+            case Action::CancelM3Print:
+                bt_printer_.cancel();
+                image_.clear();
+                state_.file_closed();
+                dirty_ = true;
                 break;
         }
     }
@@ -422,12 +538,24 @@ class Application {
                         return screen::draw_printing(printed_bytes_ + worker.print_progress(), image_.total_size());
                     case M2Page::Error: return screen::draw_error(error_text_);
                 }
+            case Mode::M3:
+                switch (state_.m2_page()) {
+                    case M2Page::List: return screen::draw_file_list(catalog_, state_.selected_file(), true);
+                    case M2Page::Preview:
+                        gbp::terminal::draw_preview(image_.data(), image_.size(),
+                                                    gbr::format::preview_palette(image_.palette()));
+                        return screen::draw_block_indicator(image_.block_index(), image_.block_count());
+                    case M2Page::Printing:
+                        return screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
+                    case M2Page::Error: return screen::draw_error(error_text_);
+                }
         }
         return false;
     }
 
     void render() {
         if (!dirty_ || display::is_presenting()) return;
+        const bool entering_m3_display = drawn_mode_ != Mode::M3 && state_.mode() == Mode::M3;
         const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
         if (!draw_screen(snapshot) || !display::present()) return;
         drawn_mode_ = state_.mode();
@@ -441,7 +569,11 @@ class Application {
         if (drawn_mode_ == Mode::M2 && state_.m2_page() == M2Page::Printing) {
             drawn_print_progress_ = worker.print_progress();
         }
+        if (drawn_mode_ == Mode::M3 && state_.m2_page() == M2Page::Printing) {
+            drawn_print_progress_ = bt_printer_.progress();
+        }
         dirty_ = false;
+        if (entering_m3_display) printf("M3 screen submitted page=%u\n", static_cast<unsigned>(state_.m2_page()));
     }
 
     void start_m2_block() {
@@ -455,10 +587,13 @@ class Application {
 
     bool card_mounted_ = false;
     bool storage_ready_ = false;
+    bool worker_started_ = false;
     std::uint8_t palette_key_ = display::WHITE_PALETTE_KEY;
     std::uint8_t backlight_percent_ = 50;
     std::uint32_t auto_cut_time_limit_us_ = 1'000'000;
     std::uint8_t rx_sample_delay_us_ = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
+    config::M3Config m3_config_{};
+    bt::BluetoothPrinter bt_printer_{};
     StateMachine state_{};
     KeyScanner keys_{};
     storage::GbrStore store_{};
@@ -484,7 +619,9 @@ class Application {
 }  // namespace
 
 void run(const bool card_mounted, const config::FirmwareConfig& firmware_config) {
-    Application application(card_mounted, firmware_config);
+    // The M3 raster and BT buffers are large enough to keep the application
+    // object out of core 0's limited call stack.
+    static Application application(card_mounted, firmware_config);
     application.run();
 }
 

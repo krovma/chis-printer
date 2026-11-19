@@ -9,13 +9,13 @@
 namespace app {
 
 enum class Key : std::uint8_t { None, Up, Down, Left, Right, Confirm };
-enum class Mode : std::uint8_t { Menu, M1, M2 };
+enum class Mode : std::uint8_t { Menu, M1, M2, M3 };
 enum class MenuPage : std::uint8_t { Select, Error };
 enum class M2Page : std::uint8_t { List, Preview, Printing, Error };
 enum class Action : std::uint8_t {
     None, Redraw, BrightnessDown, BrightnessUp, PaletteDown, PaletteUp,
-    EnterM1, ExitM1, EnterM2, ExitM2, ConfirmM1Preview,
-    OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint,
+    EnterM1, ExitM1, EnterM2, ExitM2, EnterM3, ExitM3, ConfirmM1Preview,
+    OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint, CancelM3Print,
 };
 
 class StateMachine {
@@ -34,6 +34,8 @@ class StateMachine {
     void exit_m1();
     void enter_m2(std::size_t file_count);
     void exit_m2();
+    void enter_m3(std::size_t file_count);
+    void exit_m3();
     void file_opened(std::size_t block_count);
     void file_failed();
     void file_closed();

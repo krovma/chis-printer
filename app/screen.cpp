@@ -41,16 +41,18 @@ std::string visible_name(const char* source) {
 
 bool draw_menu(const std::uint8_t selection) {
     display::clear(WHITE);
-    return centered("Menu", 62) &&
-           display::ui::draw_utf8(selection == 0 ? ">" : " ", 74, 105, BLACK) &&
-           display::ui::draw_utf8("M1", 100, 105, BLACK) &&
-           display::ui::draw_utf8(selection == 1 ? ">" : " ", 74, 140, BLACK) &&
-           display::ui::draw_utf8("M2", 100, 140, BLACK);
+    return centered("Menu", 35) &&
+           display::ui::draw_utf8(selection == 0 ? ">" : " ", 74, 82, BLACK) &&
+           display::ui::draw_utf8("M1", 100, 82, BLACK) &&
+           display::ui::draw_utf8(selection == 1 ? ">" : " ", 74, 117, BLACK) &&
+           display::ui::draw_utf8("M2", 100, 117, BLACK) &&
+           display::ui::draw_utf8(selection == 2 ? ">" : " ", 74, 152, BLACK) &&
+           display::ui::draw_utf8("M3", 100, 152, BLACK);
 }
 
-bool draw_file_list(const storage::GbrCatalog& catalog, const std::size_t selection) {
+bool draw_file_list(const storage::GbrCatalog& catalog, const std::size_t selection, const bool bluetooth) {
     display::clear(WHITE);
-    if (!centered("GBR files", 12)) return false;
+    if (!centered(bluetooth ? "BT files" : "GBR files", 12)) return false;
     if (catalog.count() == 0) return centered("No GBR files", 108);
 
     const std::size_t first = (selection / VISIBLE_FILES) * VISIBLE_FILES;
@@ -67,12 +69,13 @@ bool draw_file_list(const storage::GbrCatalog& catalog, const std::size_t select
     return centered(page, 217);
 }
 
-bool draw_printing(const std::size_t sent, const std::size_t total) {
+bool draw_printing(const std::size_t sent, const std::size_t total, const bool can_cancel) {
     display::clear(WHITE);
     char progress[16]{};
     std::snprintf(progress, sizeof(progress), "%lu%%",
                   static_cast<unsigned long>(total == 0 ? 0 : sent * 100 / total));
-    return centered("Printing", 97) && centered(progress, 130);
+    return centered("Printing", 97) && centered(progress, 130) &&
+           (!can_cancel || centered("Left cancel", 177));
 }
 
 bool draw_block_indicator(const std::size_t index, const std::size_t count) {

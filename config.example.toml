@@ -25,3 +25,9 @@ AutoCutTimeLimit = 1.0
 # SC rising edge to SI sampling delay, in microseconds (integer 2..10).
 # Omit or use an invalid value to keep the measured default of 5 us.
 rx_sample_delay_us = 5
+
+[m3]
+# M3 first tries the MAC, then searches by printer_name if that hint fails.
+printer_name = "Qsprinter"
+pin = "0000"
+mac = "86-67-7a-d8-36-6e"

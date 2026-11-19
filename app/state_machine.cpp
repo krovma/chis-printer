@@ -15,17 +15,21 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 }
                 return Action::None;
             }
-            if (key == Key::Up && menu_selection_ != 0) {
-                menu_selection_ = 0;
+            if (key == Key::Up && menu_selection_ > 0) {
+                --menu_selection_;
                 return Action::Redraw;
             }
-            if (key == Key::Down && menu_selection_ != 1) {
-                menu_selection_ = 1;
+            if (key == Key::Down && menu_selection_ < 2) {
+                ++menu_selection_;
                 return Action::Redraw;
             }
             if (key == Key::Left) return Action::BrightnessDown;
             if (key == Key::Right) return Action::BrightnessUp;
-            if (key == Key::Confirm) return menu_selection_ == 0 ? Action::EnterM1 : Action::EnterM2;
+            if (key == Key::Confirm) {
+                if (menu_selection_ == 0) return Action::EnterM1;
+                if (menu_selection_ == 1) return Action::EnterM2;
+                return Action::EnterM3;
+            }
             return Action::None;
         case Mode::M1:
             if (key == Key::Left && m1_waiting) return Action::ExitM1;
@@ -34,9 +38,10 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
             if (key == Key::Down) return Action::PaletteUp;
             return Action::None;
         case Mode::M2:
+        case Mode::M3:
             switch (m2_page_) {
                 case M2Page::List:
-                    if (key == Key::Left) return Action::ExitM2;
+                    if (key == Key::Left) return mode_ == Mode::M2 ? Action::ExitM2 : Action::ExitM3;
                     if (key == Key::Up && selected_file_ > 0) {
                         --selected_file_;
                         return Action::Redraw;
@@ -60,7 +65,7 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                     if (key == Key::Confirm) return Action::StartPrint;
                     return Action::None;
                 case M2Page::Printing:
-                    return Action::None;
+                    return mode_ == Mode::M3 && key == Key::Left ? Action::CancelM3Print : Action::None;
                 case M2Page::Error:
                     return key == Key::Left || key == Key::Confirm ? Action::CloseFile : Action::None;
             }
@@ -81,6 +86,16 @@ void StateMachine::enter_m2(const std::size_t file_count) {
     selected_file_ = 0;
 }
 void StateMachine::exit_m2() {
+    mode_ = Mode::Menu;
+    menu_page_ = MenuPage::Select;
+}
+void StateMachine::enter_m3(const std::size_t file_count) {
+    mode_ = Mode::M3;
+    m2_page_ = M2Page::List;
+    file_count_ = file_count;
+    selected_file_ = 0;
+}
+void StateMachine::exit_m3() {
     mode_ = Mode::Menu;
     menu_page_ = MenuPage::Select;
 }

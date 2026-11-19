@@ -56,6 +56,15 @@ int main() {
     assert(example_config.display.backlight_percent == 50);
     assert(example_config.m1.auto_cut_time_limit_us == 1'000'000);
     assert(example_config.m2.rx_sample_delay_us == 5);
+    assert(example_config.m3.printer_name[0] == 'Q');
+    assert(example_config.m3.pin[0] == '0');
+    assert(example_config.m3.mac[0] == 0x86);
+    const auto configured = parse(BASE_CONFIG + "\n[m3]\nprinter_name = \"Qsprinter\"\n"
+                                  "pin = \"0000\"\nmac = \"86:67:7A:D8:36:6E\"\n");
+    assert(configured.m3.mac[2] == 0x7a && configured.m3.mac[5] == 0x6e);
+    const auto fallback = parse(BASE_CONFIG + "\n[m3]\nprinter_name = \"Wrong\"\n"
+                                "pin = \"1234\"\nmac = \"bad\"\n");
+    assert(fallback.m3.printer_name[0] == 'Q' && fallback.m3.pin[0] == '0');
 
     config::FirmwareConfig unchanged;
     unchanged.m2.rx_sample_delay_us = 8;

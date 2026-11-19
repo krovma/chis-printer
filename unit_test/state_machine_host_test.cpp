@@ -43,4 +43,16 @@ int main() {
     assert(state.on_key(Key::Left, false, false) == Action::ExitM2);
     state.exit_m2();
     assert(state.mode() == Mode::Menu);
+    assert(state.on_key(Key::Down, false, false) == Action::Redraw);
+    assert(state.on_key(Key::Confirm, false, false) == Action::EnterM3);
+    state.enter_m3(1);
+    assert(state.on_key(Key::Confirm, false, false) == Action::OpenFile);
+    state.file_opened(1);
+    assert(state.on_key(Key::Confirm, false, false) == Action::StartPrint);
+    state.print_started();
+    assert(state.on_key(Key::Left, false, false) == Action::CancelM3Print);
+    state.print_finished(true);
+    assert(state.on_key(Key::Left, false, false) == Action::ExitM3);
+    state.exit_m3();
+    assert(state.mode() == Mode::Menu);
 }
