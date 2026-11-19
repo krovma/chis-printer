@@ -22,7 +22,8 @@ class Worker {
     enum class Mode : std::uint8_t { Starting, Idle, Receiving, Printing };
 
     void run();
-    void start_receive(M1State& state);
+    void start_receive(M1State& state, bool pause_on_auto_cut = false,
+                       std::uint32_t simulated_print_time_us = 1'000'000);
     void stop_receive();
     void start_print(const std::uint8_t* data, std::size_t size,
                      const gbr::format::PrintControl& control, std::uint8_t rx_sample_delay_us);
@@ -40,6 +41,8 @@ class Worker {
     std::atomic<host::PrintResult> print_result_{host::PrintResult::None};
     std::atomic<std::size_t> print_progress_{0};
     M1State* m1_ = nullptr;
+    bool pause_on_auto_cut_ = false;
+    std::uint32_t simulated_print_time_us_ = 1'000'000;
     const std::uint8_t* print_data_ = nullptr;
     std::size_t print_size_ = 0;
     gbr::format::PrintControl print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;

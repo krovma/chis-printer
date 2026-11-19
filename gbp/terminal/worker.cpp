@@ -8,8 +8,11 @@
 
 namespace gbp::terminal {
 
-void Worker::start_receive(M1State& state) {
+void Worker::start_receive(M1State& state, const bool pause_on_auto_cut,
+                           const std::uint32_t simulated_print_time_us) {
     m1_ = &state;
+    pause_on_auto_cut_ = pause_on_auto_cut;
+    simulated_print_time_us_ = simulated_print_time_us;
     mode_.store(Mode::Starting, std::memory_order_release);
     command_.store(Command::Receive, std::memory_order_release);
 }
@@ -35,7 +38,7 @@ void Worker::run() {
     while (true) {
         const Command command = command_.exchange(Command::None, std::memory_order_acq_rel);
         if (command == Command::Receive) {
-            link_.initialize();
+            link_.initialize(simulated_print_time_us_);
             mode_.store(Mode::Receiving, std::memory_order_release);
         } else if (command == Command::Stop) {
             link_.stop();
@@ -54,16 +57,25 @@ void Worker::run() {
         }
 
         if (mode_.load(std::memory_order_relaxed) == Mode::Receiving) {
+            const std::uint32_t cut_before_poll = m1_->cut_sequence();
             std::uint32_t completed_at_us = 0;
             if (link_.take_print_completion(completed_at_us)) {
                 m1_->core1_on_print_complete(completed_at_us);
             }
             m1_->core1_process_confirmation();
-            if (link_.poll(m1_->receiver())) {
+            bool cut_expired = m1_->core1_expire_completion_window(time_us_32());
+            if (!cut_expired && link_.poll(m1_->receiver())) {
                 m1_->core1_on_receiver_change(time_us_32());
                 link_.set_buffer_full(m1_->receiver().buffer_full());
             }
-            m1_->core1_expire_completion_window(time_us_32());
+            cut_expired = m1_->core1_expire_completion_window(time_us_32()) || cut_expired ||
+                          m1_->cut_sequence() != cut_before_poll;
+            if (cut_expired && pause_on_auto_cut_) {
+                link_.stop();
+                m1_->core1_pause_after_cut();
+                m1_ = nullptr;
+                mode_.store(Mode::Idle, std::memory_order_release);
+            }
         }
         tight_loop_contents();
     }

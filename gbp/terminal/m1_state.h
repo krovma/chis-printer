@@ -29,6 +29,10 @@ class M1State {
         ViewState view = ViewState::Waiting;
         std::uint32_t frames = 0;
         std::uint32_t generation = 0;
+        std::uint32_t cut_sequence = 0;
+        std::uint32_t cut_remaining_us = 0;
+        bool cut_pending = false;
+        std::uint32_t discarded_frames = 0;
     };
 
     explicit M1State(std::uint32_t auto_cut_time_limit_us = 1'000'000);
@@ -36,14 +40,16 @@ class M1State {
     Receiver& receiver() { return receiver_; }
     void core1_on_receiver_change(std::uint32_t now_us = 0);
     void core1_on_print_complete(std::uint32_t at_us);
-    void core1_expire_completion_window(std::uint32_t now_us);
+    bool core1_expire_completion_window(std::uint32_t now_us);
+    void core1_pause_after_cut();
     void core1_process_confirmation();
     void request_confirmation(std::uint32_t generation);
 
     bool acquire_frame(Frame& frame);
     void release_frame();
 
-    Snapshot snapshot() const;
+    Snapshot snapshot(std::uint32_t now_us = 0) const;
+    std::uint32_t cut_sequence() const { return cut_sequence_.load(std::memory_order_acquire); }
 
   private:
     enum class Slot : std::uint8_t { Empty, Ready, Owned };
@@ -55,6 +61,10 @@ class M1State {
     std::atomic<std::uint32_t> view_word_{0};
     std::atomic<std::uint32_t> frames_{0};
     std::atomic<std::uint32_t> confirmation_generation_{0};
+    std::atomic<std::uint32_t> cut_sequence_{0};
+    std::atomic<std::uint32_t> discarded_frames_{0};
+    std::atomic<std::uint32_t> completed_at_published_us_{0};
+    std::atomic_bool cut_pending_{false};
     Frame handed_off_{};
     std::uint32_t generation_ = 0;
     std::uint8_t active_buffer_ = 0;
@@ -62,6 +72,7 @@ class M1State {
     std::uint32_t print_completed_at_us_ = 0;
     bool completion_window_open_ = false;
     bool append_current_group_ = false;
+    void core1_publish_cut();
 };
 
 }  // namespace gbp::terminal

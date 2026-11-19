@@ -5,21 +5,9 @@
 
 #include <cstdint>
 
+#include "display/ui/text.h"
+
 namespace display::ui {
-
-bool draw_greeting_screen(const Locale requested_locale, const Gray4 background, const Gray4 foreground,
-                          const std::int16_t letter_spacing) {
-    return draw_message_screen({requested_locale, TextId::Greeting}, background, foreground, letter_spacing);
-}
-
-bool draw_message_screen(const MessageSelection selection, const Gray4 background, const Gray4 foreground,
-                         const std::int16_t letter_spacing) {
-    if (!set_message(selection)) {
-        return false;
-    }
-
-    return draw_centered_text(active_text(), background, foreground, letter_spacing);
-}
 
 bool draw_centered_text(const std::string_view text, const Gray4 background, const Gray4 foreground,
                         const std::int16_t letter_spacing) {

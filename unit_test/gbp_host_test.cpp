@@ -58,11 +58,12 @@ void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes,
     }
 }
 
-std::uint8_t reply_status(gbp::terminal::PrinterSession& session, const std::vector<std::uint8_t>& bytes) {
+std::uint8_t reply_status(gbp::terminal::PrinterSession& session, const std::vector<std::uint8_t>& bytes,
+                          const std::uint32_t now_us = 100, const bool full_after_checksum = false) {
     std::uint8_t device_id = 0;
     std::uint8_t status = 0;
     for (std::size_t i = 0; i < bytes.size(); ++i) {
-        const auto reply = session.feed(bytes[i], false);
+        const auto reply = session.feed(bytes[i], full_after_checksum && i >= bytes.size() - 2, now_us);
         if (i == bytes.size() - 3) {
             device_id = reply.next_tx;
         }
@@ -152,6 +153,7 @@ int main() {
     send(m1, packet(Command::Data, 0, tile_row));
     send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
     assert(m1.snapshot().view == gbp::terminal::ViewState::Waiting);
+    assert(m1.snapshot().discarded_frames == 1);
     gbp::terminal::M1State::Frame discarded{};
     assert(!m1.acquire_frame(discarded));
 
@@ -217,6 +219,48 @@ int main() {
     send(disabled, print);
     assert(disabled.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
     disabled.release_frame();
+
+    static gbp::terminal::M1State cutoff{100};
+    send(cutoff, init);
+    send(cutoff, data);
+    cutoff.core1_on_print_complete(1'000);
+    assert(cutoff.snapshot(1'050).cut_pending);
+    assert(cutoff.snapshot(1'050).cut_remaining_us == 50);
+    assert(!cutoff.core1_expire_completion_window(1'101));  // The frame has not been published yet.
+    send(cutoff, print, 1'102);
+    assert(cutoff.acquire_frame(timed_frame));
+    assert(cutoff.core1_expire_completion_window(1'102));
+    assert(cutoff.snapshot(1'102).cut_sequence == 1);
+    assert(!cutoff.snapshot(1'102).cut_pending);
+    assert(!cutoff.core1_expire_completion_window(1'103));
+    cutoff.release_frame();
+
+    static gbp::terminal::M1State immediate{0};
+    send(immediate, init);
+    send(immediate, data);
+    send(immediate, print);
+    assert(immediate.acquire_frame(timed_frame));
+    immediate.core1_on_print_complete(100);
+    assert(!immediate.core1_expire_completion_window(100));
+    assert(immediate.core1_expire_completion_window(101));
+    assert(immediate.snapshot(101).cut_sequence == 1);
+    immediate.release_frame();
+
+    static gbp::terminal::M1State late_group{100};
+    send(late_group, init);
+    send(late_group, data);
+    send(late_group, print);
+    assert(late_group.acquire_frame(timed_frame));
+    late_group.release_frame();
+    late_group.request_confirmation(timed_frame.generation);
+    late_group.core1_process_confirmation();
+    late_group.core1_on_print_complete(1'000);
+    send(late_group, init, 1'200);
+    send(late_group, data, 1'200);
+    assert(late_group.snapshot(1'200).cut_sequence == 1);
+    late_group.core1_pause_after_cut();
+    assert(late_group.snapshot(1'200).view == gbp::terminal::ViewState::Waiting);
+
     disabled.core1_on_print_complete(100);
     send(disabled, init, 101);
     send(disabled, data, 101);
@@ -248,19 +292,76 @@ int main() {
     assert(receiver.data_frames() == 0);
 
     gbp::terminal::PrinterSession session;
-    assert(reply_status(session, packet(Command::Init, 0, {})) == 0);
-    assert(reply_status(session, packet(Command::Data, 0, tile_row, true)) &
-           gbp::protocol::STATUS_CHECKSUM_ERROR);
-    assert((reply_status(session, packet(Command::Data, 0, tile_row)) &
-            gbp::protocol::STATUS_CHECKSUM_ERROR) == 0);
-    reply_status(session, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
-    assert(reply_status(session, packet(Command::Inquiry, 0, {})) == 0);
-    assert(reply_status(session, packet(Command::Inquiry, 0, {})) == 0);
-    assert((reply_status(session, packet(Command::Inquiry, 0, {})) &
-            (gbp::protocol::STATUS_FULL | gbp::protocol::STATUS_BUSY)) ==
-           (gbp::protocol::STATUS_FULL | gbp::protocol::STATUS_BUSY));
-    assert((reply_status(session, packet(Command::Inquiry, 0, {})) &
+    const auto inquiry_packet = packet(Command::Inquiry, 0, {});
+    const auto empty_data_packet = packet(Command::Data, 0, {});
+    const auto full_data_packet = packet(Command::Data, 0, std::vector<std::uint8_t>(0x280, 0));
+    const auto print_packet = packet(Command::Print, 0, {1, 0, 0xE4, 0x40});
+    constexpr std::uint8_t ready = gbp::protocol::STATUS_UNPROCESSED;
+    constexpr std::uint8_t printing = gbp::protocol::STATUS_FULL | gbp::protocol::STATUS_BUSY;
+    constexpr std::uint8_t done = gbp::protocol::STATUS_FULL;
+    session.set_simulated_print_time(500'000);
+    assert(reply_status(session, init, 100) == 0);
+    assert(reply_status(session, full_data_packet, 200) == 0);
+    assert(reply_status(session, inquiry_packet, 300) == ready);
+    assert(reply_status(session, empty_data_packet, 400) == ready);
+    // Core1 may mark the receive buffer full while PRINT's reply bytes clock out.
+    assert(reply_status(session, print_packet, 1'000, true) == ready);
+    assert(reply_status(session, inquiry_packet, 2'000) == printing);
+    std::uint32_t completed_at = 0;
+    assert(!session.take_print_completion(500'999, completed_at));
+    assert(reply_status(session, inquiry_packet, 500'999) == printing);
+    assert(reply_status(session, inquiry_packet, 501'000) == done);
+    assert(session.take_print_completion(501'000, completed_at) && completed_at == 501'000);
+    assert(!session.take_print_completion(501'001, completed_at));
+    for (int byte = 0; byte < 16; ++byte) session.feed(0, false, 501'001);
+    assert(reply_status(session, inquiry_packet, 501'001) == done);
+
+    session.reset();
+    assert(reply_status(session, init, 600'000) == 0);
+    assert(reply_status(session, full_data_packet, 600'010) == 0);
+    assert(reply_status(session, print_packet, 600'020) == ready);
+    assert(reply_status(session, init, 600'100) == 0);
+    assert(!session.take_print_completion(1'200'000, completed_at));
+
+    session.set_simulated_print_time(100);
+    assert(reply_status(session, full_data_packet, 699'000) == 0);
+    assert(reply_status(session, print_packet, 700'000) == ready);
+    assert(reply_status(session, init, 700'100) == 0);
+    assert(session.take_print_completion(700'100, completed_at));
+
+    session.reset();
+    assert(reply_status(session, init, 0xFFFF'FFE0) == 0);
+    assert(reply_status(session, full_data_packet, 0xFFFF'FFE1) == 0);
+    assert(reply_status(session, print_packet, 0xFFFF'FFF0) == ready);
+    assert(!session.take_print_completion(0x0000'0053, completed_at));
+    assert(session.take_print_completion(0x0000'0054, completed_at));
+    assert(reply_status(session, inquiry_packet, 0x0000'0054) == done);
+
+    session.reset();
+    session.set_simulated_print_time(0);
+    assert(reply_status(session, init, 900) == 0);
+    assert(reply_status(session, full_data_packet, 950) == 0);
+    assert(reply_status(session, print_packet, 1'000) == ready);
+    assert(session.take_print_completion(1'000, completed_at));
+    assert(reply_status(session, inquiry_packet, 1'000) == done);
+    assert(!session.take_print_completion(1'001, completed_at));
+
+    session.reset();
+    session.set_simulated_print_time(100);
+    assert(reply_status(session, init, 1'800) == 0);
+    assert(reply_status(session, full_data_packet, 1'900) == 0);
+    assert(reply_status(session, print_packet, 2'000) == ready);
+    assert(reply_status(session, inquiry_packet, 2'100) == done);
+    assert(session.take_print_completion(2'100, completed_at));
+    session.reset();
+    assert(reply_status(session, init, 2'800) == 0);
+    assert(reply_status(session, full_data_packet, 2'900) == 0);
+    assert(reply_status(session, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}, true), 3'000) ==
+           static_cast<std::uint8_t>(ready | gbp::protocol::STATUS_CHECKSUM_ERROR));
+    assert(reply_status(session, inquiry_packet, 3'050) == ready);
+    assert((reply_status(session, packet(Command::Print, 0, {}), 3'100) &
             gbp::protocol::STATUS_BUSY) == 0);
+    assert(!session.take_print_completion(3'200, completed_at));
 
     gbp::protocol::RleDecoder decoder;
     decoder.reset(true);

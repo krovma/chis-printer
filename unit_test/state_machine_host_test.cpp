@@ -86,4 +86,28 @@ int main() {
     assert(state.on_key(Key::Left, false, false, false) == Action::ExitM3);
     state.exit_m3();
     assert(state.mode() == Mode::Menu);
+    assert(state.on_key(Key::Down, false, false, false) == Action::Redraw);
+    assert(state.menu_selection() == 3);
+    assert(state.on_key(Key::Confirm, false, false, false) == Action::EnterM13);
+    state.enter_m13();
+    assert(state.mode() == Mode::M13 && state.m3_page() == M3Page::Menu);
+    assert(state.on_key(Key::Confirm, false, false, false) == Action::Redraw);
+    assert(state.m3_page() == M3Page::Pairing);
+    assert(state.on_key(Key::Confirm, false, false, false) == Action::PairM3);
+    assert(state.on_key(Key::Left, false, false, true) == Action::Redraw);
+    assert(state.on_key(Key::Down, false, false, true) == Action::Redraw);
+    assert(state.on_key(Key::Confirm, false, false, true) == Action::EnterM13Receive);
+    state.m13_receive_started();
+    assert(state.m3_page() == M3Page::Receive);
+    assert(state.on_key(Key::Left, true, false, true) == Action::ExitM13Receive);
+    state.m13_receive_finished();
+    assert(state.m3_page() == M3Page::Menu);
+    assert(state.on_key(Key::Confirm, false, false, true) == Action::EnterM13Receive);
+    state.m13_receive_started();
+    state.m3_connection_lost();
+    assert(state.m3_page() == M3Page::Pairing);
+    assert(state.on_key(Key::Left, false, false, false) == Action::Redraw);
+    assert(state.on_key(Key::Left, false, false, false) == Action::ExitM13);
+    state.exit_m13();
+    assert(state.mode() == Mode::Menu);
 }

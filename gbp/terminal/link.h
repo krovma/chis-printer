@@ -16,7 +16,7 @@ namespace gbp::terminal {
 // a single-producer byte queue; image processing runs in poll() on the main loop.
 class Link {
   public:
-    void initialize();
+    void initialize(std::uint32_t simulated_print_time_us);
     void stop();
     bool poll(Receiver& receiver);
     void set_buffer_full(bool full);
@@ -36,7 +36,6 @@ class Link {
     std::atomic<std::uint32_t> write_index_{0};
     std::atomic<bool> overflow_{false};
     std::atomic<bool> buffer_full_{false};
-    std::atomic<std::uint32_t> print_completion_us_{0};
     volatile std::uint32_t last_byte_us_ = 0;
     volatile bool synced_ = false;
     std::uint16_t preamble_ = 0;

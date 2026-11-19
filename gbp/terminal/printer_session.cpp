@@ -5,7 +5,9 @@
 
 namespace gbp::terminal {
 
-ByteReply PrinterSession::feed(const std::uint8_t byte, const bool buffer_full) {
+ByteReply PrinterSession::feed(const std::uint8_t byte, const bool buffer_full,
+                               const std::uint32_t now_us) {
+    refresh_print_status(now_us);
     const protocol::ParseResult result = parser_.feed(byte);
     switch (result.event) {
         case protocol::Event::PacketComplete:
@@ -16,18 +18,16 @@ ByteReply PrinterSession::feed(const std::uint8_t byte, const bool buffer_full) 
             } else {
                 status_ |= protocol::STATUS_CHECKSUM_ERROR;
             }
+            packet_reply_status_ = static_cast<std::uint8_t>(
+                status_ | (buffer_full ? protocol::STATUS_FULL : 0));
             return {protocol::DEVICE_ID, false};
         case protocol::Event::DummyId:
-            return {static_cast<std::uint8_t>(status_ | (buffer_full ? protocol::STATUS_FULL : 0)), false};
+            return {packet_reply_status_, false};
         case protocol::Event::DummyStatus:
-            {
-            const bool print_complete = completion_reply_pending_;
-            completion_reply_pending_ = false;
             if (packet_valid_) {
-                finish_packet(result.header);
+                finish_packet(result.header, now_us);
             }
-            return {0, true, print_complete};
-            }
+            return {0, true};
         default:
             return {};
     }
@@ -36,66 +36,65 @@ ByteReply PrinterSession::feed(const std::uint8_t byte, const bool buffer_full) 
 void PrinterSession::reset() {
     parser_.reset();
     status_ = 0;
-    busy_countdown_ = 0;
-    unprocessed_countdown_ = 0;
-    data_countdown_ = 0;
+    packet_reply_status_ = 0;
+    print_started_at_us_ = 0;
+    pending_print_started_at_us_.store(0, std::memory_order_release);
     packet_valid_ = false;
-    print_pending_ = false;
-    completion_reply_pending_ = false;
+    simulated_print_active_ = false;
+}
+
+void PrinterSession::refresh_print_status(const std::uint32_t now_us) {
+    if (!simulated_print_active_) return;
+    const auto elapsed = static_cast<std::int32_t>(now_us - print_started_at_us_);
+    if (elapsed < 0 || static_cast<std::uint32_t>(elapsed) < simulated_print_time_us_) return;
+    simulated_print_active_ = false;
+    status_ &= static_cast<std::uint8_t>(~protocol::STATUS_BUSY);
+}
+
+bool PrinterSession::take_print_completion(const std::uint32_t now_us, std::uint32_t& at_us) {
+    std::uint32_t started = pending_print_started_at_us_.load(std::memory_order_acquire);
+    if (started == 0) return false;
+    const auto elapsed = static_cast<std::int32_t>(now_us - started);
+    if (elapsed < 0 || static_cast<std::uint32_t>(elapsed) < simulated_print_time_us_) return false;
+    if (!pending_print_started_at_us_.compare_exchange_strong(started, 0, std::memory_order_acq_rel)) return false;
+    at_us = now_us == 0 ? 1 : now_us;
+    return true;
 }
 
 void PrinterSession::apply_command(const protocol::Header& header) {
     switch (static_cast<protocol::Command>(header.command)) {
         case protocol::Command::Init:
             status_ = 0;
-            print_pending_ = false;
-            data_countdown_ = 6;
-            unprocessed_countdown_ = 0;
-            busy_countdown_ = 0;
-            break;
-        case protocol::Command::Print:
-            print_pending_ = true;
-            busy_countdown_ = 1;
-            break;
-        case protocol::Command::Data:
-            unprocessed_countdown_ = 3;
+            if (simulated_print_active_) {
+                pending_print_started_at_us_.store(0, std::memory_order_release);
+            }
+            simulated_print_active_ = false;
             break;
         case protocol::Command::Break:
             status_ = protocol::STATUS_FULL | protocol::STATUS_BUSY;
-            print_pending_ = false;
+            simulated_print_active_ = false;
+            pending_print_started_at_us_.store(0, std::memory_order_release);
             break;
-        case protocol::Command::Inquiry:
-            if (unprocessed_countdown_ > 0) {
-                if (--unprocessed_countdown_ == 0 && busy_countdown_ > 0) {
-                    status_ |= protocol::STATUS_FULL | protocol::STATUS_BUSY;
-                }
-            } else if (busy_countdown_ > 0 && --busy_countdown_ == 0) {
-                status_ &= static_cast<std::uint8_t>(~protocol::STATUS_BUSY);
-            }
-            if (print_pending_ && busy_countdown_ == 0 && unprocessed_countdown_ == 0 &&
-                (status_ & protocol::STATUS_BUSY) == 0) {
-                completion_reply_pending_ = true;
-                print_pending_ = false;
-            }
-            break;
+        default: break;
     }
 }
 
-void PrinterSession::finish_packet(const protocol::Header& header) {
+void PrinterSession::finish_packet(const protocol::Header& header, const std::uint32_t now_us) {
     switch (static_cast<protocol::Command>(header.command)) {
         case protocol::Command::Data:
-            if (data_countdown_ > 0) {
-                --data_countdown_;
-            }
-            status_ &= static_cast<std::uint8_t>(~(protocol::STATUS_FULL | protocol::STATUS_UNPROCESSED));
-            if (header.length == 0) {
-                status_ |= protocol::STATUS_FULL;
+            if (header.length != 0) {
+                status_ &= static_cast<std::uint8_t>(~protocol::STATUS_FULL);
+                status_ |= protocol::STATUS_UNPROCESSED;
             }
             break;
-        case protocol::Command::Inquiry:
-            status_ &= static_cast<std::uint8_t>(~protocol::STATUS_UNPROCESSED);
-            if (unprocessed_countdown_ == 0 && busy_countdown_ == 0) {
-                status_ &= static_cast<std::uint8_t>(~protocol::STATUS_FULL);
+        case protocol::Command::Print:
+            if (header.length >= 4) {
+                // The PRINT reply still reports ready; busy begins after its status byte.
+                print_started_at_us_ = now_us == 0 ? 1 : now_us;
+                simulated_print_active_ = true;
+                status_ &= static_cast<std::uint8_t>(~protocol::STATUS_UNPROCESSED);
+                status_ |= protocol::STATUS_FULL | protocol::STATUS_BUSY;
+                pending_print_started_at_us_.store(print_started_at_us_, std::memory_order_release);
             }
             break;
         default:

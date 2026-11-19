@@ -19,13 +19,13 @@ constexpr std::uint32_t PACKET_TIMEOUT_US = 400'000;
 
 }  // namespace
 
-void Link::initialize() {
+void Link::initialize(const std::uint32_t simulated_print_time_us) {
     session_.reset();
+    session_.set_simulated_print_time(simulated_print_time_us);
     read_index_.store(0);
     write_index_.store(0);
     overflow_.store(false);
     buffer_full_.store(false);
-    print_completion_us_.store(0);
     synced_ = false;
     preamble_ = 0;
     bit_count_ = 0;
@@ -41,7 +41,6 @@ void Link::stop() {
     reset_wire();
     read_index_.store(0, std::memory_order_relaxed);
     write_index_.store(0, std::memory_order_relaxed);
-    print_completion_us_.store(0, std::memory_order_relaxed);
     gpio_set_dir(board::LINK_CLOCK, GPIO_IN);
     gpio_put(board::LINK_DATA_OUT, true);
 }
@@ -61,8 +60,9 @@ void Link::on_rising_clock() {
             input_byte_ = 0;
             output_byte_ = 0;
             bit_count_ = 0;
-            session_.feed(0x88, buffer_full_.load(std::memory_order_relaxed));
-            session_.feed(0x33, buffer_full_.load(std::memory_order_relaxed));
+            const auto now_us = time_us_32();
+            session_.feed(0x88, buffer_full_.load(std::memory_order_relaxed), now_us);
+            session_.feed(0x33, buffer_full_.load(std::memory_order_relaxed), now_us);
             if (!enqueue(0x88) || !enqueue(0x33)) {
                 overflow_.store(true, std::memory_order_relaxed);
             }
@@ -74,18 +74,15 @@ void Link::on_rising_clock() {
 
     input_byte_ = static_cast<std::uint8_t>((input_byte_ << 1) | input_bit);
     if (++bit_count_ == 8) {
-        const ByteReply reply = session_.feed(input_byte_, buffer_full_.load(std::memory_order_relaxed));
+        const auto now_us = time_us_32();
+        const ByteReply reply = session_.feed(input_byte_, buffer_full_.load(std::memory_order_relaxed), now_us);
         if (!enqueue(input_byte_)) {
             overflow_.store(true, std::memory_order_relaxed);
         }
-        last_byte_us_ = time_us_32();
+        last_byte_us_ = now_us;
         input_byte_ = 0;
         bit_count_ = 0;
         output_byte_ = reply.next_tx;
-        if (reply.print_complete) {
-            const std::uint32_t now = time_us_32();
-            print_completion_us_.store(now == 0 ? 1 : now, std::memory_order_release);
-        }
         if (reply.packet_end) {
             synced_ = false;
             preamble_ = 0;
@@ -163,8 +160,7 @@ void Link::set_buffer_full(const bool full) {
 }
 
 bool Link::take_print_completion(std::uint32_t& at_us) {
-    at_us = print_completion_us_.exchange(0, std::memory_order_acq_rel);
-    return at_us != 0;
+    return session_.take_print_completion(time_us_32(), at_us);
 }
 
 }  // namespace gbp::terminal

@@ -9,9 +9,9 @@
 #include <cstdint>
 
 #include "config/firmware_config.h"
-#include "m3/escpos.h"
+#include "btprinter/escpos.h"
 
-namespace bt {
+namespace btprinter {
 
 enum class PrintStatus : std::uint8_t { Disabled, Idle, Printing, Success, Error };
 enum class ConnectionState : std::uint8_t { Disconnected, Connecting, Connected, Error };
@@ -69,6 +69,7 @@ class BluetoothPrinter {
                     std::uint8_t* packet, std::uint16_t size);
     void begin_sdp_query();
     void begin_inquiry();
+    void select_discovered_address(const std::uint8_t* address);
     void query_next_remote_name();
     void close_link();
     void send_next_band();
@@ -88,8 +89,10 @@ class BluetoothPrinter {
 
     static BluetoothPrinter* instance_;
     std::array<std::uint8_t, 6> address_{};
+    bool address_known_ = false;
     std::array<char, 32> printer_name_{};
     std::array<char, 8> pin_{};
+    std::uint8_t image_scale_ = DEFAULT_IMAGE_SCALE;
     std::atomic<PrintStatus> status_{PrintStatus::Disabled};
     std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
     std::atomic_bool connected_{false};
@@ -127,8 +130,8 @@ class BluetoothPrinter {
     std::array<InquiryDevice, MAX_INQUIRY_DEVICES> inquiry_devices_{};
     std::size_t tx_length_ = 0;
     std::size_t tx_offset_ = 0;
-    m3::EscPosRasterEncoder encoder_{};
-    std::array<std::uint8_t, m3::BAND_BYTES> band_buffer_{};
+    EscPosRasterEncoder encoder_{};
+    std::array<std::uint8_t, MAX_BAND_BYTES> band_buffer_{};
 };
 
-}  // namespace bt
+}  // namespace btprinter

@@ -132,10 +132,15 @@ int main() {
     const gbr::format::PrintControl default_print{1, 0x13, 0xE4, 0x40};
     const gbr::format::PrintControl custom_print{0, 0xA5, 0x2D, 0xFF};
     storage::GbrStore initial_store;
+    char last_name[32]{};
+    assert(!initial_store.last_filename(last_name, sizeof(last_name)));
     assert(initial_store.initialize());
     assert(directory_exists);
     assert(initial_store.begin(first_image.data(), first_image.size(), default_print));
     finish_write(initial_store);
+    assert(initial_store.last_filename(last_name, sizeof(last_name)));
+    assert(std::string(last_name) == "00001.gbr");
+    assert(!initial_store.last_filename(last_name, 4));
     assert(files.count("0:/DCIM/00001.gbr") == 1);
     const auto first_file_header = gbr::format::make_gbr_file_header(1);
     const auto first_block_header = gbr::format::make_gbr_block_header(160, 8, default_print);
@@ -159,6 +164,8 @@ int main() {
     assert(!restarted_store.begin(image.data(), 1599, custom_print));
     assert(restarted_store.begin(image.data(), image.size(), custom_print));
     finish_write(restarted_store);
+    assert(restarted_store.last_filename(last_name, sizeof(last_name)));
+    assert(std::string(last_name) == "100002.gbr");
     const auto& stored = files.at("0:/DCIM/100002.gbr");
     const auto header = gbr::format::make_gbr_file_header(1);
     const auto block = gbr::format::make_gbr_block_header(160, 40, custom_print);
@@ -192,6 +199,8 @@ int main() {
     const auto& appended = files.at("0:/DCIM/100002.gbr");
     assert(appended.size() == original.size() + 8 + first_image.size());
     assert(appended[5] == 2);
+    assert(restarted_store.last_filename(last_name, sizeof(last_name)));
+    assert(std::string(last_name) == "100002.gbr");
     assert(std::equal(first_block_header.begin(), first_block_header.end(), appended.begin() + original.size()));
 
     char seven_digit_path[40]{};

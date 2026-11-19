@@ -6,15 +6,12 @@
 #include <cstdint>
 #include <string_view>
 
-#include "display/ui/text.h"
+#include "display/zjy154s0800.h"
 
 namespace display::ui {
 
-// Clear the display and draw the selected message in the center of the 240 x
-// 240 screen. The caller submits the resulting frame with present().
-bool draw_greeting_screen(Locale locale, Gray4 background, Gray4 foreground, std::int16_t letter_spacing = 0);
-bool draw_message_screen(MessageSelection selection, Gray4 background, Gray4 foreground,
-                         std::int16_t letter_spacing = 0);
+// Clear the display and draw text in the center of the 240 x 240 screen.
+// The caller submits the resulting frame with present().
 bool draw_centered_text(std::string_view text, Gray4 background, Gray4 foreground,
                         std::int16_t letter_spacing = 0);
 

@@ -15,6 +15,9 @@ const std::string BASE_CONFIG =
     "[display]\n"
     "palette = \"white\"\n"
     "backlight_percent = 75\n";
+const std::string M3_CONNECTION =
+    "\n[m3]\nprinter_name = \"Qsprinter\"\n"
+    "pin = \"0000\"\n";
 
 config::FirmwareConfig parse(const std::string& contents) {
     config::FirmwareConfig result;
@@ -34,12 +37,22 @@ int main() {
 
     assert(parse(BASE_CONFIG).m2.rx_sample_delay_us == 5);
     assert(parse(BASE_CONFIG).m1.auto_cut_time_limit_us == 1'000'000);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 0\n").m1.auto_cut_time_limit_us == 0);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 0.25\n").m1.auto_cut_time_limit_us == 250'000);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 60\n").m1.auto_cut_time_limit_us == 60'000'000);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = -1\n").m1.auto_cut_time_limit_us == 1'000'000);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 61\n").m1.auto_cut_time_limit_us == 1'000'000);
-    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = \"1\"\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG).m1.simulated_print_time_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = 0\n").m1.auto_cut_time_limit_us == 0);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = 0.25\n").m1.auto_cut_time_limit_us == 250'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = 60\n").m1.auto_cut_time_limit_us == 60'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = -1\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = 61\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nauto_cut_time_limit = \"1\"\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nsimulated_print_time = 0\n").m1.simulated_print_time_us == 0);
+    assert(parse(BASE_CONFIG + "\n[m1]\nsimulated_print_time = 0.75\n").m1.simulated_print_time_us == 750'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nsimulated_print_time = 60\n").m1.simulated_print_time_us == 60'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nsimulated_print_time = -1\n").m1.simulated_print_time_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[m1]\nsimulated_print_time = 61\n").m1.simulated_print_time_us == 1'000'000);
+    const auto legacy_m1 = parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 0.25\n"
+                                 "SimulatedPrintTime = 0.75\n");
+    assert(legacy_m1.m1.auto_cut_time_limit_us == 250'000);
+    assert(legacy_m1.m1.simulated_print_time_us == 750'000);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 2\n").m2.rx_sample_delay_us == 2);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 10\n").m2.rx_sample_delay_us == 10);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 0\n").m2.rx_sample_delay_us == 5);
@@ -55,15 +68,42 @@ int main() {
     assert(config::parse_firmware_config(example_text, example_config));
     assert(example_config.display.backlight_percent == 50);
     assert(example_config.m1.auto_cut_time_limit_us == 1'000'000);
+    assert(example_config.m1.simulated_print_time_us == 1'000'000);
     assert(example_config.m2.rx_sample_delay_us == 5);
     assert(example_config.m3.printer_name[0] == 'Q');
     assert(example_config.m3.pin[0] == '0');
-    assert(example_config.m3.mac[0] == 0x86);
-    const auto configured = parse(BASE_CONFIG + "\n[m3]\nprinter_name = \"Qsprinter\"\n"
-                                  "pin = \"0000\"\nmac = \"86:67:7A:D8:36:6E\"\n");
-    assert(configured.m3.mac[2] == 0x7a && configured.m3.mac[5] == 0x6e);
+    assert(example_config.m3.printer_type == config::PrinterType::Mm58);
+    assert(example_config.m3.resolved_advance().printable_width_dots == 384);
+    assert(example_config.m3.resolved_advance().image_scale == 2);
+    const auto configured = parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"80mm\"\n");
+    assert(configured.m3.printer_name[0] == 'Q' && configured.m3.pin[0] == '0');
+    assert(configured.m3.printer_type == config::PrinterType::Mm80);
+    assert(configured.m3.resolved_advance().printable_width_dots == 576);
+    assert(configured.m3.resolved_advance().image_scale == 3);
+    assert(parse(BASE_CONFIG + M3_CONNECTION).m3.resolved_advance().image_scale == 2);
+    assert(parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"unknown\"\n")
+               .m3.resolved_advance().image_scale == 2);
+    const std::string overrides = "[m3.advance]\nprintable_width_dots_58mm = 360\nimage_scale_58mm = 2\n"
+                                  "printable_width_dots_80mm = 512\nimage_scale_80mm = 3\n";
+    const auto advanced_58mm = parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"58mm\"\n" + overrides);
+    assert(advanced_58mm.m3.resolved_advance().printable_width_dots == 360);
+    assert(advanced_58mm.m3.resolved_advance().image_scale == 2);
+    assert(advanced_58mm.m3.advance.mm80.printable_width_dots == 512);
+    const auto advanced_80mm = parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"80mm\"\n" + overrides);
+    assert(advanced_80mm.m3.resolved_advance().printable_width_dots == 512);
+    assert(advanced_80mm.m3.resolved_advance().image_scale == 3);
+    assert(advanced_80mm.m3.advance.mm58.printable_width_dots == 360);
+    assert(parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"58mm\"\n"
+                 "[m3.advance]\nimage_scale_58mm = 3\n").m3.resolved_advance().image_scale == 2);
+    assert(parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"80mm\"\n"
+                 "[m3.advance]\nimage_scale_80mm = 1\n").m3.resolved_advance().image_scale == 3);
+    assert(parse(BASE_CONFIG + M3_CONNECTION + "[m3.advance]\nprintable_width_dots_58mm = 319\n")
+               .m3.resolved_advance().printable_width_dots == 384);
+    assert(parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"80mm\"\n"
+                 "[m3.advance]\nprintable_width_dots_80mm = 479\n")
+               .m3.resolved_advance().printable_width_dots == 576);
     const auto fallback = parse(BASE_CONFIG + "\n[m3]\nprinter_name = \"Wrong\"\n"
-                                "pin = \"1234\"\nmac = \"bad\"\n");
+                                "pin = \"\"\n");
     assert(fallback.m3.printer_name[0] == 'Q' && fallback.m3.pin[0] == '0');
 
     config::FirmwareConfig unchanged;

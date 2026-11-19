@@ -3,11 +3,8 @@
 format_version = 1
 
 [ui]
-# The firmware ignores [ui] settings.
-# Locale choices: en, zh, ja.
+# Locale choices: en, zh, ja. Reserved for localized UI text.
 locale = "en"
-# Message choices: greeting, printer.
-startup_message = "greeting"
 
 [display]
 # Palette choices: red, yellow, green, cyan, blue, magenta, white.
@@ -16,10 +13,13 @@ palette = "white"
 # Unreadable or invalid configuration uses white and 50 percent.
 backlight_percent = 50
 
-[M1]
+[m1]
 # Seconds after the printer reports completion in which the next DATA group
 # joins the same GBR file. Number 0..60; 0 disables joining. Default: 1 s.
-AutoCutTimeLimit = 1.0
+auto_cut_time_limit = 1.0
+# Seconds to report printer busy after PRINT. STATUS remains responsive.
+# This delay is excluded from auto_cut_time_limit. Number 0..60; 0 disables it.
+simulated_print_time = 1.0
 
 [m2]
 # SC rising edge to SI sampling delay, in microseconds (integer 2..10).
@@ -27,7 +27,20 @@ AutoCutTimeLimit = 1.0
 rx_sample_delay_us = 5
 
 [m3]
-# M3 first tries the MAC, then searches by printer_name if that hint fails.
+# First pairing discovers the printer by its Classic Bluetooth name.
 printer_name = "Qsprinter"
 pin = "0000"
-mac = "86-67-7a-d8-36-6e"
+# Paper size: 58mm uses 320-dot output (2x); 80mm uses 480-dot output (3x).
+printer_type = "58mm"
+
+# Optional head details for nonstandard variants. Printable width checks image
+# fit; printer alignment still controls centering. Scale must match printer_type;
+# 1x is unsupported. Defaults: 58mm = 384 printable dots / 2x,
+# 80mm = 576 printable dots / 3x.
+# [m3.advance]
+# 58mm printer: print width 48mm at 203dpi; 2x gives 320 dots per line.
+# printable_width_dots_58mm = 384
+# image_scale_58mm = 2
+# 80mm printer: 3x gives 480 dots per line.
+# printable_width_dots_80mm = 576
+# image_scale_80mm = 3

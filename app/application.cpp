@@ -21,8 +21,9 @@
 
 #include "app/screen.h"
 #include "app/state_machine.h"
-#include "bt/bluetooth_printer.h"
+#include "btprinter/bluetooth_printer.h"
 #include "display/ui/screen.h"
+#include "display/ui/text.h"
 #include "display/zjy154s0800.h"
 #include "gbr/format.h"
 #include "gbp/terminal/m1_state.h"
@@ -131,6 +132,7 @@ class Application {
         : card_mounted_(card_mounted), palette_key_(config.display.palette_key),
           backlight_percent_(config.display.backlight_percent),
           auto_cut_time_limit_us_(config.m1.auto_cut_time_limit_us),
+          simulated_print_time_us_(config.m1.simulated_print_time_us),
           rx_sample_delay_us_(config.m2.rx_sample_delay_us), m3_config_(config.m3) {}
 
     [[noreturn]] void run() {
@@ -143,7 +145,9 @@ class Application {
         keys_.initialize();
 
         absolute_time_t next_sram_report = make_timeout_time_ms(1000);
+#if defined(KP_BT_DEBUG)
         absolute_time_t next_m3_report = make_timeout_time_ms(2000);
+#endif
         while (true) {
             if (bt_printer_.initialized()) {
                 cyw43_arch_poll();
@@ -153,17 +157,18 @@ class Application {
                 report_sram_usage();
                 next_sram_report = make_timeout_time_ms(1000);
             }
-            bt::TraceEvent bt_event;
+            btprinter::TraceEvent bt_event;
             while (bt_printer_.pop_trace(bt_event)) {
                 printf("M3 BT event t=%lu %s a=0x%lx b=0x%lx\n",
-                       static_cast<unsigned long>(bt_event.uptime_ms), bt::trace_kind_name(bt_event.kind),
+                       static_cast<unsigned long>(bt_event.uptime_ms), btprinter::trace_kind_name(bt_event.kind),
                        static_cast<unsigned long>(bt_event.value), static_cast<unsigned long>(bt_event.extra));
             }
-            if (state_.mode() == Mode::M3) {
+            if (state_.mode() == Mode::M3 || state_.mode() == Mode::M13) {
                 const auto connection = bt_printer_.connection_state();
                 if (connection != drawn_connection_state_) {
-                    if (drawn_connection_state_ == bt::ConnectionState::Connected &&
-                        connection != bt::ConnectionState::Connected && state_.m3_page() == M3Page::Files) {
+                    if (drawn_connection_state_ == btprinter::ConnectionState::Connected &&
+                        connection != btprinter::ConnectionState::Connected && state_.mode() == Mode::M3 &&
+                        state_.m3_page() == M3Page::Files) {
                         image_.clear();
                         state_.m3_connection_lost();
                     }
@@ -171,9 +176,11 @@ class Application {
                     dirty_ = true;
                 }
             }
+#if defined(KP_BT_DEBUG)
             if (time_reached(next_m3_report)) {
-                if (state_.mode() == Mode::M3) {
-                    printf("M3 alive t=%lu init=%u hci=%u link=%u status=%u page=%u/%u sent=%lu/%lu drops=%lu\n",
+                if (state_.mode() == Mode::M3 || state_.mode() == Mode::M13) {
+                    printf("%s alive t=%lu init=%u hci=%u link=%u status=%u page=%u/%u sent=%lu/%lu drops=%lu\n",
+                           state_.mode() == Mode::M13 ? "M1+3" : "M3",
                            static_cast<unsigned long>(time_us_32() / 1000u),
                            bt_printer_.initialized() ? 1u : 0u, bt_printer_.hci_ready() ? 1u : 0u,
                            static_cast<unsigned>(bt_printer_.connection_state()),
@@ -185,9 +192,11 @@ class Application {
                 }
                 next_m3_report = make_timeout_time_ms(2000);
             }
+#endif
             if (state_.mode() == Mode::M1) update_m1();
             if (state_.mode() == Mode::M2) update_m2();
             if (state_.mode() == Mode::M3) update_m3();
+            if (state_.mode() == Mode::M13 && state_.m3_page() == M3Page::Receive) update_m13();
             handle_key(keys_.poll());
             render();
             tight_loop_contents();
@@ -272,7 +281,7 @@ class Application {
         leaving_m1_ = false;
         confirmation_pending_ = false;
         ensure_worker_started();
-        worker.start_receive(*m1_);
+        worker.start_receive(*m1_, false, simulated_print_time_us_);
         state_.enter_m1();
         dirty_ = true;
     }
@@ -335,15 +344,284 @@ class Application {
     }
 
     void enter_m3() {
+#if defined(KP_BT_DEBUG)
         printf("M3 enter t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
         printf("M3 enter: bluetooth init begin\n");
+#endif
         const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
+#if defined(KP_BT_DEBUG)
         printf("M3 enter: bluetooth init done ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
                bt_printer_.hci_ready() ? 1u : 0u);
+#endif
+        if (!bluetooth_ok) printf("ERROR: M3 Bluetooth init failed\n");
         state_.enter_m3();
         drawn_connection_state_ = bt_printer_.connection_state();
         dirty_ = true;
+#if defined(KP_BT_DEBUG)
         printf("M3 enter: state ready page=%u\n", static_cast<unsigned>(state_.m3_page()));
+#endif
+    }
+
+    void enter_m13() {
+        const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
+#if defined(KP_BT_DEBUG)
+        printf("M1+3 enter: bluetooth init ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
+               bt_printer_.hci_ready() ? 1u : 0u);
+#endif
+        if (!bluetooth_ok) printf("ERROR: M1+3 Bluetooth init failed\n");
+        state_.enter_m13();
+        drawn_connection_state_ = bt_printer_.connection_state();
+        dirty_ = true;
+    }
+
+    void enter_m13_receive() {
+        if (!storage_ready_) {
+            menu_error_ = "SD CARD ERROR";
+            state_.exit_m13();
+            state_.menu_failed();
+            dirty_ = true;
+            return;
+        }
+        std::unique_ptr<gbp::terminal::M1State> next{
+            new (std::nothrow) gbp::terminal::M1State{auto_cut_time_limit_us_}};
+        if (!next) {
+            printf("ERROR: M1+3 buffer allocation failed\n");
+            menu_error_ = "M1+3 error";
+            state_.exit_m13();
+            state_.menu_failed();
+            dirty_ = true;
+            return;
+        }
+        m1_ = std::move(next);
+        active_frame_ = {};
+        frame_owned_ = false;
+        save_active_ = false;
+        confirmation_pending_ = false;
+        m13_cut_seen_ = m1_->cut_sequence();
+        m13_discarded_seen_ = 0;
+        m13_cut_pending_ = false;
+        m13_group_saved_ = false;
+        m13_save_failed_ = false;
+        m13_printing_ = false;
+        m13_stop_requested_ = false;
+        m13_manual_exit_requested_ = false;
+        m13_error_ = {};
+        drawn_m13_ = {};
+        drawn_m13_tenths_ = UINT32_MAX;
+        ensure_worker_started();
+        worker.start_receive(*m1_, true, simulated_print_time_us_);
+        state_.m13_receive_started();
+        printf("M1+3 receive started\n");
+        dirty_ = true;
+    }
+
+    void leave_m13_receive(const bool pairing = true) {
+        if (worker.mode() != gbp::terminal::Worker::Mode::Idle || frame_owned_ || save_active_ || store_.busy()) {
+            printf("ERROR: M1+3 exit deferred: worker=%u frame=%u sd=%u\n",
+                   static_cast<unsigned>(worker.mode()), frame_owned_ ? 1u : 0u, store_.busy() ? 1u : 0u);
+            return;
+        }
+        image_.clear();
+        m1_.reset();
+        m13_cut_pending_ = false;
+        m13_group_saved_ = false;
+        m13_printing_ = false;
+        m13_stop_requested_ = false;
+        m13_manual_exit_requested_ = false;
+        if (pairing) state_.m3_connection_lost();
+        else state_.m13_receive_finished();
+        printf("M1+3 receive stopped; %s menu\n", pairing ? "pairing" : "mode");
+        dirty_ = true;
+    }
+
+    void finish_m13_print(const bool success) {
+        image_.clear();
+        m13_printing_ = false;
+        m13_cut_pending_ = false;
+        m13_group_saved_ = false;
+        m13_save_failed_ = false;
+        if (!success && m13_error_.empty()) m13_error_ = "BT print error";
+        if (bt_printer_.connected()) {
+            if (m13_manual_exit_requested_) {
+                leave_m13_receive(false);
+                return;
+            }
+            worker.start_receive(*m1_, true, simulated_print_time_us_);
+            printf("M1+3 receive resumed after BT print ok=%u\n", success ? 1u : 0u);
+        } else {
+            leave_m13_receive();
+            return;
+        }
+        dirty_ = true;
+    }
+
+    void update_m13() {
+        if (!frame_owned_ && m1_->acquire_frame(active_frame_)) {
+            frame_owned_ = true;
+            m1_->request_confirmation(active_frame_.generation);
+            save_active_ = store_.begin(active_frame_.data, active_frame_.size, active_frame_.print_control,
+                                        active_frame_.append_to_previous);
+            if (!save_active_) {
+                m13_save_failed_ = true;
+                m13_error_ = "GBR save error";
+            } else if (!m13_save_failed_) {
+                m13_error_ = {};
+            }
+            dirty_ = true;
+        }
+
+        const auto snapshot = m1_->snapshot(time_us_32());
+        if (snapshot.view != drawn_m13_.view ||
+            (snapshot.view == gbp::terminal::ViewState::Receiving && snapshot.frames != drawn_m13_.frames)) {
+            dirty_ = true;
+        }
+        if (snapshot.discarded_frames != m13_discarded_seen_) {
+            m13_discarded_seen_ = snapshot.discarded_frames;
+            m13_save_failed_ = true;
+            m13_error_ = "GBR save error";
+            printf("ERROR: M1+3 frame discarded before SD save\n");
+            dirty_ = true;
+        }
+        const std::uint32_t tenths = snapshot.cut_pending ?
+            (snapshot.cut_remaining_us + 99'999u) / 100'000u : UINT32_MAX;
+        if (tenths != drawn_m13_tenths_) dirty_ = true;
+        if (snapshot.cut_sequence != m13_cut_seen_) {
+            m13_cut_seen_ = snapshot.cut_sequence;
+            m13_cut_pending_ = true;
+            printf("M1+3 AutoCut expired; waiting for SD and Core1 pause\n");
+            dirty_ = true;
+        }
+
+        if (save_active_) {
+            const auto result = store_.step();
+            if (result == storage::GbrStore::StepResult::Complete) {
+                save_active_ = false;
+                m13_group_saved_ = true;
+            } else if (result == storage::GbrStore::StepResult::Error) {
+                save_active_ = false;
+                m13_save_failed_ = true;
+                m13_error_ = "GBR save error";
+                dirty_ = true;
+            }
+        }
+        if (frame_owned_ && !save_active_) {
+            m1_->release_frame();
+            frame_owned_ = false;
+        }
+
+        if (m13_printing_) {
+            const auto status = bt_printer_.status();
+            if (status == btprinter::PrintStatus::Printing && bt_printer_.connected()) return;
+            if (status == btprinter::PrintStatus::Success) {
+                if (image_.block_index() + 1 < image_.block_count()) {
+                    if (!bt_printer_.connected()) {
+                        finish_m13_print(false);
+                        return;
+                    }
+                    if (!image_.next_block()) {
+                        m13_error_ = "GBR read error";
+                        printf("ERROR: M1+3 next GBR block read failed\n");
+                        finish_m13_print(false);
+                        return;
+                    }
+                    if (bt_printer_.start(image_.data(), image_.size(), image_.palette(), false,
+                                          image_.block_index() + 1 == image_.block_count())) {
+                        printf("M1+3 BT block %lu/%lu\n",
+                               static_cast<unsigned long>(image_.block_index() + 1),
+                               static_cast<unsigned long>(image_.block_count()));
+                        return;
+                    }
+                    m13_error_ = "BT print error";
+                    printf("ERROR: M1+3 next BT block start failed\n");
+                    finish_m13_print(false);
+                    return;
+                }
+                printf("M1+3 BT print completed\n");
+                finish_m13_print(true);
+                return;
+            }
+            printf("ERROR: M1+3 BT print interrupted status=%u\n", static_cast<unsigned>(status));
+            finish_m13_print(false);
+            return;
+        }
+
+        if (m13_cut_pending_ && worker.mode() == gbp::terminal::Worker::Mode::Idle &&
+            !frame_owned_ && !save_active_) {
+            if (!bt_printer_.connected()) {
+                leave_m13_receive();
+                return;
+            }
+            if (m13_save_failed_ || !m13_group_saved_) {
+                printf("M1+3 AutoCut skipped: saved=%u error=%u\n",
+                       m13_group_saved_ ? 1u : 0u, m13_save_failed_ ? 1u : 0u);
+                m13_cut_pending_ = false;
+                m13_group_saved_ = false;
+                m13_save_failed_ = false;
+                if (m13_manual_exit_requested_) {
+                    leave_m13_receive(false);
+                    return;
+                }
+                worker.start_receive(*m1_, true, simulated_print_time_us_);
+                dirty_ = true;
+                return;
+            }
+            char filename[storage::GBR_NAME_CAPACITY]{};
+            if (!store_.last_filename(filename, sizeof(filename)) || !image_.load(filename)) {
+                printf("ERROR: M1+3 could not load saved GBR %s\n", filename);
+                m13_error_ = "GBR read error";
+                finish_m13_print(false);
+                return;
+            }
+            if (!bt_printer_.start(image_.data(), image_.size(), image_.palette(), true,
+                                   image_.block_count() == 1)) {
+                printf("ERROR: M1+3 could not start BT print for %s\n", filename);
+                m13_error_ = "BT print error";
+                finish_m13_print(false);
+                return;
+            }
+            m13_printing_ = true;
+            printf("M1+3 BT print started %s blocks=%lu\n", filename,
+                   static_cast<unsigned long>(image_.block_count()));
+            report_sram_usage();
+            dirty_ = true;
+            return;
+        }
+
+        if (bt_printer_.connected() && m13_stop_requested_ && !m13_manual_exit_requested_ &&
+            worker.mode() == gbp::terminal::Worker::Mode::Idle &&
+            !frame_owned_ && !save_active_) {
+            worker.start_receive(*m1_, true, simulated_print_time_us_);
+            m13_stop_requested_ = false;
+            printf("M1+3 link recovered before pairing menu; receive resumed\n");
+            dirty_ = true;
+            return;
+        }
+
+        if (!bt_printer_.connected() && !m13_printing_) {
+            if (worker.mode() == gbp::terminal::Worker::Mode::Idle &&
+                !frame_owned_ && !save_active_) {
+                leave_m13_receive();
+            } else if (!m13_stop_requested_ &&
+                       worker.mode() == gbp::terminal::Worker::Mode::Receiving &&
+                       snapshot.view == gbp::terminal::ViewState::Waiting && !snapshot.cut_pending &&
+                       !m13_group_saved_ && !m13_save_failed_ && !frame_owned_ && !save_active_) {
+                worker.stop_receive();
+                m13_stop_requested_ = true;
+                printf("M1+3 disconnected while idle; stopping Core1\n");
+            }
+        } else if (m13_manual_exit_requested_ && !m13_printing_ && !m13_cut_pending_) {
+            if (worker.mode() == gbp::terminal::Worker::Mode::Idle &&
+                !frame_owned_ && !save_active_ && !m13_group_saved_ && !m13_save_failed_) {
+                leave_m13_receive(false);
+            } else if (!m13_stop_requested_ &&
+                       worker.mode() == gbp::terminal::Worker::Mode::Receiving &&
+                       snapshot.view == gbp::terminal::ViewState::Waiting && !snapshot.cut_pending &&
+                       !m13_group_saved_ && !m13_save_failed_ && !frame_owned_ && !save_active_) {
+                worker.stop_receive();
+                m13_stop_requested_ = true;
+                printf("M1+3 manual exit while idle; stopping Core1\n");
+            }
+        }
     }
 
     void update_m2() {
@@ -383,11 +661,11 @@ class Application {
     void update_m3() {
         if (state_.m3_page() != M3Page::Files || state_.m2_page() != M2Page::Printing) return;
         const auto status = bt_printer_.status();
-        if (status == bt::PrintStatus::Printing) {
+        if (status == btprinter::PrintStatus::Printing) {
             if (bt_printer_.progress() != drawn_print_progress_) dirty_ = true;
             return;
         }
-        if (status == bt::PrintStatus::Success) {
+        if (status == btprinter::PrintStatus::Success) {
             if (image_.block_index() + 1 < image_.block_count()) {
                 if (image_.next_block() &&
                     bt_printer_.start(image_.data(), image_.size(), image_.palette(), false,
@@ -402,7 +680,7 @@ class Application {
                 image_.clear();
                 state_.print_finished(true);
             }
-        } else if (status == bt::PrintStatus::Error) {
+        } else if (status == btprinter::PrintStatus::Error) {
             error_text_ = "BT print error";
             image_.clear();
             state_.print_finished(false);
@@ -430,6 +708,12 @@ class Application {
                 break;
             case Action::EnterM2: enter_m2(); break;
             case Action::EnterM3: enter_m3(); break;
+            case Action::EnterM13: enter_m13(); break;
+            case Action::EnterM13Receive: enter_m13_receive(); break;
+            case Action::ExitM13Receive:
+                m13_manual_exit_requested_ = true;
+                dirty_ = true;
+                break;
             case Action::ExitM2:
                 image_.clear();
                 catalog_.clear();
@@ -441,6 +725,11 @@ class Application {
                 image_.clear();
                 catalog_.clear();
                 state_.exit_m3();
+                dirty_ = true;
+                break;
+            case Action::ExitM13:
+                bt_printer_.disconnect();
+                state_.exit_m13();
                 dirty_ = true;
                 break;
             case Action::PairM3:
@@ -565,16 +854,18 @@ class Application {
                     case M2Page::Error: return screen::draw_error(error_text_);
                 }
             case Mode::M3:
+            case Mode::M13:
                 switch (state_.m3_page()) {
                     case M3Page::Menu:
-                        return screen::draw_m3_menu(state_.m3_selection(), bt_printer_.connected());
+                        return screen::draw_m3_menu(state_.m3_selection(), bt_printer_.connected(),
+                                                    state_.mode() == Mode::M13);
                     case M3Page::Pairing: {
                         std::string_view status = "Disconnected";
                         switch (bt_printer_.connection_state()) {
-                            case bt::ConnectionState::Disconnected: break;
-                            case bt::ConnectionState::Connecting: status = "Connecting"; break;
-                            case bt::ConnectionState::Connected: status = "Connected"; break;
-                            case bt::ConnectionState::Error: status = "Pair failed"; break;
+                            case btprinter::ConnectionState::Disconnected: break;
+                            case btprinter::ConnectionState::Connecting: status = "Connecting"; break;
+                            case btprinter::ConnectionState::Connected: status = "Connected"; break;
+                            case btprinter::ConnectionState::Error: status = "Pair failed"; break;
                         }
                         return screen::draw_m3_pairing(state_.m3_pair_selection(), status);
                     }
@@ -589,6 +880,15 @@ class Application {
                                 return screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
                             case M2Page::Error: return screen::draw_error(error_text_);
                         }
+                    case M3Page::Receive:
+                        if (!m13_printing_ && !m13_cut_pending_ &&
+                            snapshot.view == gbp::terminal::ViewState::Receiving) {
+                            return gbp::terminal::draw_receiving(snapshot.frames);
+                        }
+                        return screen::draw_m13_receive(snapshot.cut_pending, snapshot.cut_remaining_us,
+                                                        frame_owned_ || m13_group_saved_ ||
+                                                            snapshot.view == gbp::terminal::ViewState::Preview,
+                                                        m13_cut_pending_, m13_printing_, m13_error_);
                 }
         }
         return false;
@@ -596,10 +896,13 @@ class Application {
 
     void render() {
         if (!dirty_ || display::is_presenting()) return;
+#if defined(KP_BT_DEBUG)
         const bool entering_m3_display = drawn_mode_ != Mode::M3 && state_.mode() == Mode::M3;
-        const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
+#endif
+        const auto snapshot = m1_ ? m1_->snapshot(time_us_32()) : gbp::terminal::M1State::Snapshot{};
         if (!draw_screen(snapshot)) return;
-        if (state_.mode() == Mode::M3 && bt_printer_.connected() && !screen::draw_paired_badge()) return;
+        if ((state_.mode() == Mode::M3 || state_.mode() == Mode::M13) && bt_printer_.connected() &&
+            !screen::draw_paired_badge()) return;
         if (!display::present()) return;
         drawn_mode_ = state_.mode();
         if (drawn_mode_ == Mode::M1) {
@@ -616,8 +919,15 @@ class Application {
             state_.m2_page() == M2Page::Printing) {
             drawn_print_progress_ = bt_printer_.progress();
         }
+        if (drawn_mode_ == Mode::M13 && state_.m3_page() == M3Page::Receive) {
+            drawn_m13_ = snapshot;
+            drawn_m13_tenths_ = snapshot.cut_pending ?
+                (snapshot.cut_remaining_us + 99'999u) / 100'000u : UINT32_MAX;
+        }
         dirty_ = false;
+#if defined(KP_BT_DEBUG)
         if (entering_m3_display) printf("M3 screen submitted page=%u\n", static_cast<unsigned>(state_.m2_page()));
+#endif
     }
 
     void start_m2_block() {
@@ -635,10 +945,11 @@ class Application {
     std::uint8_t palette_key_ = display::WHITE_PALETTE_KEY;
     std::uint8_t backlight_percent_ = 50;
     std::uint32_t auto_cut_time_limit_us_ = 1'000'000;
+    std::uint32_t simulated_print_time_us_ = 1'000'000;
     std::uint8_t rx_sample_delay_us_ = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
     config::M3Config m3_config_{};
-    bt::BluetoothPrinter bt_printer_{};
-    bt::ConnectionState drawn_connection_state_ = bt::ConnectionState::Disconnected;
+    btprinter::BluetoothPrinter bt_printer_{};
+    btprinter::ConnectionState drawn_connection_state_ = btprinter::ConnectionState::Disconnected;
     StateMachine state_{};
     KeyScanner keys_{};
     storage::GbrStore store_{};
@@ -647,6 +958,7 @@ class Application {
     std::unique_ptr<gbp::terminal::M1State> m1_{};
     gbp::terminal::M1State::Frame active_frame_{};
     gbp::terminal::M1State::Snapshot drawn_m1_{};
+    gbp::terminal::M1State::Snapshot drawn_m13_{};
     Mode drawn_mode_ = Mode::Menu;
     std::string_view menu_error_ = "SD CARD ERROR";
     std::string_view error_text_ = "GBR error";
@@ -658,6 +970,16 @@ class Application {
     bool save_active_ = false;
     bool leaving_m1_ = false;
     bool confirmation_pending_ = false;
+    std::uint32_t m13_cut_seen_ = 0;
+    std::uint32_t m13_discarded_seen_ = 0;
+    std::uint32_t drawn_m13_tenths_ = UINT32_MAX;
+    std::string_view m13_error_{};
+    bool m13_cut_pending_ = false;
+    bool m13_group_saved_ = false;
+    bool m13_save_failed_ = false;
+    bool m13_printing_ = false;
+    bool m13_stop_requested_ = false;
+    bool m13_manual_exit_requested_ = false;
     bool dirty_ = true;
 };
 

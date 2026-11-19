@@ -112,13 +112,13 @@ add_executable(kuper-printer
     app/screen.h
     app/state_machine.cpp
     app/state_machine.h
-    bt/bluetooth_printer.cpp
-    bt/bluetooth_printer.h
+    btprinter/bluetooth_printer.cpp
+    btprinter/bluetooth_printer.h
+    btprinter/escpos.cpp
+    btprinter/escpos.h
     btstack_config.h
     config/firmware_config.cpp
     config/firmware_config.h
-    m3/escpos.cpp
-    m3/escpos.h
     display/palette.h
     display/ui/screen.cpp
     display/ui/screen.h
@@ -190,6 +190,7 @@ endif()
 target_compile_definitions(kuper-printer PRIVATE
     CYW43_LWIP=0
     PICO_BTSTACK_CYW43_MAX_HCI_PROCESS_LOOP_COUNT=16
+    $<$<CONFIG:Debug>:KP_BT_DEBUG=1>
 )
 
 pico_set_program_name(kuper-printer "kuper-printer")

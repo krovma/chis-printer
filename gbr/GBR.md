@@ -28,7 +28,7 @@ The block version remains `2` so future block formats can be distinguished from 
 
 Sheets is recorded as received, but does not multiply the number of stored or rendered blocks. M2 sends each block to the physical printer with Sheets set to `1`, regardless of its recorded value, to avoid printing duplicate copies. Its other PRINT bytes are preserved. GB Camera typically sends margins `0x13`, palette `0xE4`, and exposure `0x40`.
 
-M1 starts a new v3 file for the first block. When another DATA group starts within `M1.AutoCutTimeLimit` after a print-complete reply, M1 appends its block to the preceding file and updates the block count. The default limit is one second; zero disables merging. If the preceding file is unavailable, a new file is created.
+M1 starts a new v3 file for the first block. When another DATA group starts within `m1.auto_cut_time_limit` after a print-complete reply, M1 appends its block to the preceding file and updates the block count. The default limit is one second; zero disables merging. If the preceding file is unavailable, a new file is created.
 
 ## Earlier versions and PNG conversion
 

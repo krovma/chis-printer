@@ -51,6 +51,17 @@ bool GbrStore::initialize() {
     return true;
 }
 
+bool GbrStore::last_filename(char* output, const std::size_t capacity) const {
+    if (!last_file_valid_ || output == nullptr || capacity == 0) return false;
+    const char* name = std::strrchr(last_path_, '/');
+    if (name == nullptr) return false;
+    ++name;
+    const std::size_t length = std::strlen(name);
+    if (length == 0 || length >= capacity) return false;
+    std::memcpy(output, name, length + 1);
+    return true;
+}
+
 bool GbrStore::open_previous() {
     if (!last_file_valid_) return false;
     std::memcpy(path_, last_path_, sizeof(path_));

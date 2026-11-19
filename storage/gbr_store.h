@@ -23,6 +23,7 @@ class GbrStore {
                bool append_to_previous = false);
     StepResult step();
     bool busy() const { return phase_ != Phase::Idle; }
+    bool last_filename(char* output, std::size_t capacity) const;
 
   private:
     enum class Phase : std::uint8_t { Idle, FileHeader, BlockHeader, Payload, Count, Close };

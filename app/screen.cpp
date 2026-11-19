@@ -43,22 +43,42 @@ std::string visible_name(const char* source) {
 bool draw_menu(const std::uint8_t selection) {
     display::clear(WHITE);
     return centered("Menu", 35) &&
-           display::ui::draw_utf8(selection == 0 ? ">" : " ", 74, 82, BLACK) &&
-           display::ui::draw_utf8("M1", 100, 82, BLACK) &&
-           display::ui::draw_utf8(selection == 1 ? ">" : " ", 74, 117, BLACK) &&
-           display::ui::draw_utf8("M2", 100, 117, BLACK) &&
-           display::ui::draw_utf8(selection == 2 ? ">" : " ", 74, 152, BLACK) &&
-           display::ui::draw_utf8("M3", 100, 152, BLACK);
+           display::ui::draw_utf8(selection == 0 ? ">" : " ", 74, 68, BLACK) &&
+           display::ui::draw_utf8("M1", 100, 68, BLACK) &&
+           display::ui::draw_utf8(selection == 1 ? ">" : " ", 74, 103, BLACK) &&
+           display::ui::draw_utf8("M2", 100, 103, BLACK) &&
+           display::ui::draw_utf8(selection == 2 ? ">" : " ", 74, 138, BLACK) &&
+           display::ui::draw_utf8("M3", 100, 138, BLACK) &&
+           display::ui::draw_utf8(selection == 3 ? ">" : " ", 74, 173, BLACK) &&
+           display::ui::draw_utf8("M1+3", 100, 173, BLACK);
 }
 
-bool draw_m3_menu(const std::uint8_t selection, const bool connected) {
+bool draw_m3_menu(const std::uint8_t selection, const bool connected, const bool m13) {
     display::clear(WHITE);
-    return centered("M3", 35) &&
+    return centered(m13 ? "M1+3" : "M3", 35) &&
            display::ui::draw_utf8(selection == 0 ? ">" : " ", 52, 94, BLACK) &&
            display::ui::draw_utf8("Pair", 80, 94, BLACK) &&
            display::ui::draw_utf8(selection == 1 ? ">" : " ", 52, 137, BLACK) &&
            display::ui::draw_utf8("Print", 80, 137, connected ? BLACK : DIM) &&
            (connected || centered("Pair first", 190));
+}
+
+bool draw_m13_receive(const bool countdown, const std::uint32_t remaining_us,
+                      const bool awaiting_cut, const bool saving, const bool printing,
+                      const std::string_view error) {
+    display::clear(WHITE);
+    if (!error.empty()) return centered(error, 108);
+    if (printing) return centered("BT Printing", 108);
+    if (saving) return centered("Saving GBR", 108);
+    if (countdown) {
+        char seconds[24]{};
+        const unsigned long whole = static_cast<unsigned long>(remaining_us / 1'000'000u);
+        const unsigned long tenths = static_cast<unsigned long>((remaining_us % 1'000'000u + 99'999u) / 100'000u);
+        std::snprintf(seconds, sizeof(seconds), "%lu.%lus", whole + tenths / 10u, tenths % 10u);
+        return centered("AutoCut", 84) && centered(seconds, 126);
+    }
+    if (awaiting_cut) return centered("AutoCut", 84) && centered("Waiting", 126);
+    return centered("Waiting", 108) && centered("Left back", 207);
 }
 
 bool draw_m3_pairing(const std::uint8_t selection, const std::string_view status) {
