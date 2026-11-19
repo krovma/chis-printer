@@ -145,7 +145,10 @@ class Application {
         absolute_time_t next_sram_report = make_timeout_time_ms(1000);
         absolute_time_t next_m3_report = make_timeout_time_ms(2000);
         while (true) {
-            if (bt_printer_.initialized()) cyw43_arch_poll();
+            if (bt_printer_.initialized()) {
+                cyw43_arch_poll();
+                bt_printer_.service();
+            }
             if (time_reached(next_sram_report)) {
                 report_sram_usage();
                 next_sram_report = make_timeout_time_ms(1000);
@@ -156,12 +159,26 @@ class Application {
                        static_cast<unsigned long>(bt_event.uptime_ms), bt::trace_kind_name(bt_event.kind),
                        static_cast<unsigned long>(bt_event.value), static_cast<unsigned long>(bt_event.extra));
             }
+            if (state_.mode() == Mode::M3) {
+                const auto connection = bt_printer_.connection_state();
+                if (connection != drawn_connection_state_) {
+                    if (drawn_connection_state_ == bt::ConnectionState::Connected &&
+                        connection != bt::ConnectionState::Connected && state_.m3_page() == M3Page::Files) {
+                        image_.clear();
+                        state_.m3_connection_lost();
+                    }
+                    drawn_connection_state_ = connection;
+                    dirty_ = true;
+                }
+            }
             if (time_reached(next_m3_report)) {
                 if (state_.mode() == Mode::M3) {
-                    printf("M3 alive t=%lu init=%u hci=%u status=%u page=%u sent=%lu/%lu drops=%lu\n",
+                    printf("M3 alive t=%lu init=%u hci=%u link=%u status=%u page=%u/%u sent=%lu/%lu drops=%lu\n",
                            static_cast<unsigned long>(time_us_32() / 1000u),
                            bt_printer_.initialized() ? 1u : 0u, bt_printer_.hci_ready() ? 1u : 0u,
-                           static_cast<unsigned>(bt_printer_.status()), static_cast<unsigned>(state_.m2_page()),
+                           static_cast<unsigned>(bt_printer_.connection_state()),
+                           static_cast<unsigned>(bt_printer_.status()), static_cast<unsigned>(state_.m3_page()),
+                           static_cast<unsigned>(state_.m2_page()),
                            static_cast<unsigned long>(bt_printer_.progress()),
                            static_cast<unsigned long>(bt_printer_.total()),
                            static_cast<unsigned long>(bt_printer_.trace_drops()));
@@ -318,24 +335,15 @@ class Application {
     }
 
     void enter_m3() {
-        printf("M3 enter: catalog begin t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
-        const bool catalog_ok = card_mounted_ && catalog_.refresh();
-        printf("M3 enter: catalog done ok=%u files=%lu\n", catalog_ok ? 1u : 0u,
-               static_cast<unsigned long>(catalog_ok ? catalog_.count() : 0));
+        printf("M3 enter t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
         printf("M3 enter: bluetooth init begin\n");
         const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
         printf("M3 enter: bluetooth init done ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
                bt_printer_.hci_ready() ? 1u : 0u);
-        state_.enter_m3(catalog_ok ? catalog_.count() : 0);
-        if (!catalog_ok) {
-            error_text_ = card_mounted_ ? "GBR error" : "SD CARD ERROR";
-            state_.file_failed();
-        } else if (!bluetooth_ok) {
-            error_text_ = "BT error";
-            state_.file_failed();
-        }
+        state_.enter_m3();
+        drawn_connection_state_ = bt_printer_.connection_state();
         dirty_ = true;
-        printf("M3 enter: state ready page=%u\n", static_cast<unsigned>(state_.m2_page()));
+        printf("M3 enter: state ready page=%u\n", static_cast<unsigned>(state_.m3_page()));
     }
 
     void update_m2() {
@@ -373,9 +381,9 @@ class Application {
     }
 
     void update_m3() {
-        if (state_.m2_page() != M2Page::Printing) return;
+        if (state_.m3_page() != M3Page::Files || state_.m2_page() != M2Page::Printing) return;
         const auto status = bt_printer_.status();
-        if (status == bt::PrintStatus::Connecting || status == bt::PrintStatus::Printing) {
+        if (status == bt::PrintStatus::Printing) {
             if (bt_printer_.progress() != drawn_print_progress_) dirty_ = true;
             return;
         }
@@ -407,7 +415,7 @@ class Application {
         const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
         const Action action = state_.on_key(key, snapshot.view == gbp::terminal::ViewState::Waiting,
                                             snapshot.view == gbp::terminal::ViewState::Preview &&
-                                                !confirmation_pending_);
+                                                !confirmation_pending_, bt_printer_.connected());
         switch (action) {
             case Action::None: break;
             case Action::Redraw: dirty_ = true; break;
@@ -429,12 +437,30 @@ class Application {
                 dirty_ = true;
                 break;
             case Action::ExitM3:
-                bt_printer_.cancel();
+                bt_printer_.disconnect();
                 image_.clear();
                 catalog_.clear();
                 state_.exit_m3();
                 dirty_ = true;
                 break;
+            case Action::PairM3:
+                bt_printer_.connect(true);
+                dirty_ = true;
+                break;
+            case Action::DisconnectM3:
+                bt_printer_.disconnect();
+                dirty_ = true;
+                break;
+            case Action::EnterM3Files: {
+                const bool catalog_ok = card_mounted_ && catalog_.refresh();
+                state_.m3_files_ready(catalog_ok ? catalog_.count() : 0);
+                if (!catalog_ok) {
+                    error_text_ = card_mounted_ ? "GBR error" : "SD CARD ERROR";
+                    state_.file_failed();
+                }
+                dirty_ = true;
+                break;
+            }
             case Action::ConfirmM1Preview:
                 confirmation_pending_ = true;
                 confirmation_generation_ = snapshot.generation;
@@ -497,9 +523,9 @@ class Application {
                 }
                 break;
             case Action::CancelM3Print:
-                bt_printer_.cancel();
+                bt_printer_.disconnect();
                 image_.clear();
-                state_.file_closed();
+                state_.m3_connection_lost();
                 dirty_ = true;
                 break;
         }
@@ -539,15 +565,30 @@ class Application {
                     case M2Page::Error: return screen::draw_error(error_text_);
                 }
             case Mode::M3:
-                switch (state_.m2_page()) {
-                    case M2Page::List: return screen::draw_file_list(catalog_, state_.selected_file(), true);
-                    case M2Page::Preview:
-                        gbp::terminal::draw_preview(image_.data(), image_.size(),
-                                                    gbr::format::preview_palette(image_.palette()));
-                        return screen::draw_block_indicator(image_.block_index(), image_.block_count());
-                    case M2Page::Printing:
-                        return screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
-                    case M2Page::Error: return screen::draw_error(error_text_);
+                switch (state_.m3_page()) {
+                    case M3Page::Menu:
+                        return screen::draw_m3_menu(state_.m3_selection(), bt_printer_.connected());
+                    case M3Page::Pairing: {
+                        std::string_view status = "Disconnected";
+                        switch (bt_printer_.connection_state()) {
+                            case bt::ConnectionState::Disconnected: break;
+                            case bt::ConnectionState::Connecting: status = "Connecting"; break;
+                            case bt::ConnectionState::Connected: status = "Connected"; break;
+                            case bt::ConnectionState::Error: status = "Pair failed"; break;
+                        }
+                        return screen::draw_m3_pairing(state_.m3_pair_selection(), status);
+                    }
+                    case M3Page::Files:
+                        switch (state_.m2_page()) {
+                            case M2Page::List: return screen::draw_file_list(catalog_, state_.selected_file(), true);
+                            case M2Page::Preview:
+                                gbp::terminal::draw_preview(image_.data(), image_.size(),
+                                                            gbr::format::preview_palette(image_.palette()));
+                                return screen::draw_block_indicator(image_.block_index(), image_.block_count());
+                            case M2Page::Printing:
+                                return screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
+                            case M2Page::Error: return screen::draw_error(error_text_);
+                        }
                 }
         }
         return false;
@@ -557,7 +598,9 @@ class Application {
         if (!dirty_ || display::is_presenting()) return;
         const bool entering_m3_display = drawn_mode_ != Mode::M3 && state_.mode() == Mode::M3;
         const auto snapshot = m1_ ? m1_->snapshot() : gbp::terminal::M1State::Snapshot{};
-        if (!draw_screen(snapshot) || !display::present()) return;
+        if (!draw_screen(snapshot)) return;
+        if (state_.mode() == Mode::M3 && bt_printer_.connected() && !screen::draw_paired_badge()) return;
+        if (!display::present()) return;
         drawn_mode_ = state_.mode();
         if (drawn_mode_ == Mode::M1) {
             drawn_m1_ = snapshot;
@@ -569,7 +612,8 @@ class Application {
         if (drawn_mode_ == Mode::M2 && state_.m2_page() == M2Page::Printing) {
             drawn_print_progress_ = worker.print_progress();
         }
-        if (drawn_mode_ == Mode::M3 && state_.m2_page() == M2Page::Printing) {
+        if (drawn_mode_ == Mode::M3 && state_.m3_page() == M3Page::Files &&
+            state_.m2_page() == M2Page::Printing) {
             drawn_print_progress_ = bt_printer_.progress();
         }
         dirty_ = false;
@@ -594,6 +638,7 @@ class Application {
     std::uint8_t rx_sample_delay_us_ = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
     config::M3Config m3_config_{};
     bt::BluetoothPrinter bt_printer_{};
+    bt::ConnectionState drawn_connection_state_ = bt::ConnectionState::Disconnected;
     StateMachine state_{};
     KeyScanner keys_{};
     storage::GbrStore store_{};

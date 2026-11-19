@@ -3,6 +3,7 @@
 
 #include "bt/bluetooth_printer.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -12,8 +13,15 @@
 #include "pico/time.h"
 
 namespace bt {
+namespace {
+constexpr std::uint64_t CONNECTION_TIMEOUT_MS = 60'000;
+}
+
 const char* trace_kind_name(const TraceKind kind) {
     switch (kind) {
+        case TraceKind::ConnectRequest: return "connect_request";
+        case TraceKind::DisconnectRequest: return "disconnect_request";
+        case TraceKind::ConnectionTimeout: return "connection_timeout";
         case TraceKind::JobStart: return "job_start";
         case TraceKind::HciState: return "hci_state";
         case TraceKind::HciLink: return "hci_link";
@@ -70,6 +78,7 @@ bool BluetoothPrinter::initialize(const config::M3Config& config) {
     std::memcpy(pin_.data(), config.pin.data(), pin_.size() - 1);
     if (pin_[0] == '\0') {
         std::printf("M3 BT init invalid PIN\n");
+        connection_state_.store(ConnectionState::Error, std::memory_order_release);
         return false;
     }
 
@@ -80,6 +89,7 @@ bool BluetoothPrinter::initialize(const config::M3Config& config) {
                 static_cast<unsigned long>(time_us_32() / 1000u));
     if (arch_result != 0) {
         status_.store(PrintStatus::Error, std::memory_order_release);
+        connection_state_.store(ConnectionState::Error, std::memory_order_release);
         return false;
     }
     // These guards are no-ops in polling mode, but keep BTstack calls safe if
@@ -100,16 +110,119 @@ bool BluetoothPrinter::initialize(const config::M3Config& config) {
     cyw43_arch_lwip_end();
     std::printf("M3 BT context lock released\n");
     initialized_.store(true, std::memory_order_release);
+    status_.store(power_result == ERROR_CODE_SUCCESS ? PrintStatus::Idle : PrintStatus::Error,
+                  std::memory_order_release);
+    if (power_result != ERROR_CODE_SUCCESS) {
+        connection_state_.store(ConnectionState::Error, std::memory_order_release);
+    }
+    return power_result == ERROR_CODE_SUCCESS;
+}
+
+void BluetoothPrinter::close_link() {
+    if (disconnect_pending_) return;
+    if (hci_connection_handle_ != HCI_CON_HANDLE_INVALID) {
+        const std::uint16_t handle = hci_connection_handle_;
+        disconnect_pending_ = true;
+        const std::uint8_t result = gap_disconnect(handle);
+        if (result == ERROR_CODE_SUCCESS || result == ERROR_CODE_COMMAND_DISALLOWED) return;
+        disconnect_pending_ = false;
+        hci_connection_handle_ = HCI_CON_HANDLE_INVALID;
+    }
+    if (rfcomm_cid_ != 0) {
+        const std::uint16_t cid = rfcomm_cid_;
+        disconnect_pending_ = true;
+        if (rfcomm_disconnect(cid) == ERROR_CODE_SUCCESS) return;
+        disconnect_pending_ = false;
+    }
+    rfcomm_cid_ = 0;
+    rfcomm_mtu_ = 0;
+    hci_connection_handle_ = HCI_CON_HANDLE_INVALID;
+}
+
+bool BluetoothPrinter::connect(const bool forget_link_key) {
+    if (!initialized_.load(std::memory_order_acquire)) return false;
+    cyw43_arch_lwip_begin();
+    trace(TraceKind::ConnectRequest, forget_link_key ? 1u : 0u,
+          static_cast<std::uint32_t>(connection_state_.load(std::memory_order_acquire)));
+    const int power_result = hci_power_control(HCI_POWER_ON);
+    if (power_result != ERROR_CODE_SUCCESS) {
+        connection_state_.store(ConnectionState::Error, std::memory_order_release);
+        cyw43_arch_lwip_end();
+        return false;
+    }
+    connect_requested_.store(false, std::memory_order_release);
+    print_pending_.store(false, std::memory_order_release);
     status_.store(PrintStatus::Idle, std::memory_order_release);
+    if (inquiry_pending_) gap_inquiry_stop();
+    connect_queued_ = true;
+    forget_link_key_queued_ = forget_link_key;
+    connect_started_ms_ = time_us_64() / 1000u;
+    connected_.store(false, std::memory_order_release);
+    connection_state_.store(ConnectionState::Connecting, std::memory_order_release);
+    close_link();
+    cyw43_arch_lwip_end();
     return true;
+}
+
+void BluetoothPrinter::disconnect() {
+    const bool initialized = initialized_.load(std::memory_order_acquire);
+    if (initialized) cyw43_arch_lwip_begin();
+    if (initialized) trace(TraceKind::DisconnectRequest,
+                           static_cast<std::uint32_t>(connection_state_.load(std::memory_order_acquire)));
+    connect_requested_.store(false, std::memory_order_release);
+    connect_queued_ = false;
+    forget_link_key_queued_ = false;
+    print_pending_.store(false, std::memory_order_release);
+    status_.store(initialized ? PrintStatus::Idle : PrintStatus::Disabled, std::memory_order_release);
+    if (inquiry_pending_) gap_inquiry_stop();
+    connected_.store(false, std::memory_order_release);
+    connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
+    if (initialized) close_link();
+    if (initialized) cyw43_arch_lwip_end();
+}
+
+void BluetoothPrinter::service() {
+    if (!initialized_.load(std::memory_order_acquire) ||
+        connection_state_.load(std::memory_order_acquire) != ConnectionState::Connecting) return;
+    cyw43_arch_lwip_begin();
+    if (time_us_64() / 1000u - connect_started_ms_ >= CONNECTION_TIMEOUT_MS) {
+        trace(TraceKind::ConnectionTimeout, static_cast<std::uint32_t>(query_pending_),
+              static_cast<std::uint32_t>(rfcomm_open_pending_));
+        if (inquiry_pending_) gap_inquiry_stop();
+        fail_connection();
+        cyw43_arch_lwip_end();
+        return;
+    }
+    if (!hci_ready_.load(std::memory_order_acquire) || query_pending_ || inquiry_pending_ ||
+        name_query_pending_ || rfcomm_open_pending_ || disconnect_pending_ || rfcomm_cid_ != 0 ||
+        hci_connection_handle_ != HCI_CON_HANDLE_INVALID || !sdp_client_ready()) {
+        cyw43_arch_lwip_end();
+        return;
+    }
+    if (connect_queued_) {
+        connect_queued_ = false;
+        connect_requested_.store(true, std::memory_order_release);
+        inquiry_attempted_ = false;
+        inquiry_match_found_ = false;
+        inquiry_count_ = 0;
+        name_query_index_ = 0;
+        rfcomm_server_channel_ = 0;
+        link_key_retry_done_ = false;
+        if (forget_link_key_queued_) {
+            gap_drop_link_key_for_bd_addr(address_.data());
+            forget_link_key_queued_ = false;
+        }
+    }
+    if (connect_requested_.load(std::memory_order_acquire)) begin_sdp_query();
+    cyw43_arch_lwip_end();
 }
 
 bool BluetoothPrinter::start(const std::uint8_t* image, const std::size_t size,
                              const std::uint8_t palette, const bool first_block,
                              const bool last_block) {
-    if (!initialized_.load(std::memory_order_acquire) || image == nullptr || size == 0) return false;
+    if (!connected() || image == nullptr || size == 0) return false;
     cyw43_arch_lwip_begin();
-    if (status() == PrintStatus::Connecting || status() == PrintStatus::Printing) {
+    if (!connected() || rfcomm_cid_ == 0 || status() == PrintStatus::Printing) {
         cyw43_arch_lwip_end();
         return false;
     }
@@ -121,49 +234,18 @@ bool BluetoothPrinter::start(const std::uint8_t* image, const std::size_t size,
     header_sent_ = !first_block && rfcomm_cid_ != 0;
     footer_sent_ = !last_block;
     printer_flow_paused_ = false;
-    link_key_retry_done_ = false;
     tx_length_ = 0;
     tx_offset_ = 0;
-    query_pending_ = false;
-    inquiry_attempted_ = false;
-    inquiry_pending_ = false;
-    inquiry_match_found_ = false;
-    name_query_pending_ = false;
-    inquiry_count_ = 0;
-    name_query_index_ = 0;
-    rfcomm_server_channel_ = 0;
     progress_.store(0, std::memory_order_release);
     total_.store(encoder_.encoded_size() + (header_sent_ ? 0 : 8) +
                      (footer_sent_ ? 0 : 9), std::memory_order_release);
     trace(TraceKind::JobStart, static_cast<std::uint32_t>(size),
           static_cast<std::uint32_t>(encoder_.band_count()));
-    request_pending_.store(true, std::memory_order_release);
-    status_.store(PrintStatus::Connecting, std::memory_order_release);
-    if (rfcomm_cid_ != 0) {
-        status_.store(PrintStatus::Printing, std::memory_order_release);
-        rfcomm_request_can_send_now_event(rfcomm_cid_);
-    } else if (hci_ready_.load(std::memory_order_acquire)) {
-        begin_sdp_query();
-    }
+    print_pending_.store(true, std::memory_order_release);
+    status_.store(PrintStatus::Printing, std::memory_order_release);
+    const bool send_ready = request_can_send_now();
     cyw43_arch_lwip_end();
-    return true;
-}
-
-void BluetoothPrinter::cancel() {
-    const bool initialized = initialized_.load(std::memory_order_acquire);
-    if (initialized) cyw43_arch_lwip_begin();
-    request_pending_.store(false, std::memory_order_release);
-    printer_flow_paused_ = false;
-    query_pending_ = false;
-    if (inquiry_pending_) gap_inquiry_stop();
-    inquiry_pending_ = false;
-    name_query_pending_ = false;
-    if (rfcomm_cid_ != 0) {
-        rfcomm_disconnect(rfcomm_cid_);
-        rfcomm_cid_ = 0;
-    }
-    status_.store(initialized ? PrintStatus::Idle : PrintStatus::Disabled, std::memory_order_release);
-    if (initialized) cyw43_arch_lwip_end();
+    return send_ready;
 }
 
 void BluetoothPrinter::packet_handler(const std::uint8_t packet_type, const std::uint16_t channel,
@@ -186,11 +268,11 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
             printer_flow_paused_ = true;
         } else if (packet[0] == 0x11) {
             printer_flow_paused_ = false;
-            if (request_pending_.load(std::memory_order_acquire) && rfcomm_cid_ != 0) {
-                rfcomm_request_can_send_now_event(rfcomm_cid_);
+            if (print_pending_.load(std::memory_order_acquire) && rfcomm_cid_ != 0) {
+                request_can_send_now();
             }
         } else if (packet[0] == 0x08) {
-            fail();
+            fail_print();
         }
         return;
     }
@@ -211,8 +293,43 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
         trace(TraceKind::HciState, state);
         if (state == HCI_STATE_WORKING) {
             hci_ready_.store(true, std::memory_order_release);
-            if (request_pending_.load(std::memory_order_acquire) && rfcomm_cid_ == 0) begin_sdp_query();
+        } else {
+            const bool was_ready = hci_ready_.exchange(false, std::memory_order_acq_rel);
+            if (was_ready) {
+                const bool reconnecting = connection_state_.load(std::memory_order_acquire) ==
+                                          ConnectionState::Connecting;
+                if (print_pending_.load(std::memory_order_acquire)) fail_print();
+                connected_.store(false, std::memory_order_release);
+                rfcomm_cid_ = 0;
+                rfcomm_mtu_ = 0;
+                hci_connection_handle_ = HCI_CON_HANDLE_INVALID;
+                disconnect_pending_ = false;
+                rfcomm_open_pending_ = false;
+                query_pending_ = false;
+                inquiry_pending_ = false;
+                name_query_pending_ = false;
+                connect_requested_.store(false, std::memory_order_release);
+                if (reconnecting) {
+                    connect_queued_ = true;
+                    connect_started_ms_ = time_us_64() / 1000u;
+                } else if (connection_state_.load(std::memory_order_acquire) == ConnectionState::Connected) {
+                    connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
+                }
+            }
         }
+        return;
+    }
+    if (event == HCI_EVENT_DISCONNECTION_COMPLETE && hci_connection_handle_ != HCI_CON_HANDLE_INVALID &&
+        hci_event_disconnection_complete_get_connection_handle(packet) == hci_connection_handle_) {
+        rfcomm_cid_ = 0;
+        rfcomm_mtu_ = 0;
+        hci_connection_handle_ = HCI_CON_HANDLE_INVALID;
+        disconnect_pending_ = false;
+        connected_.store(false, std::memory_order_release);
+        if (connection_state_.load(std::memory_order_acquire) == ConnectionState::Connected) {
+            connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
+        }
+        if (print_pending_.load(std::memory_order_acquire)) fail_print();
         return;
     }
     if (event == HCI_EVENT_PIN_CODE_REQUEST) {
@@ -230,6 +347,7 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
         return;
     }
     if (event == GAP_EVENT_INQUIRY_RESULT && inquiry_pending_) {
+        if (!connect_requested_.load(std::memory_order_acquire)) return;
         if (inquiry_match_found_) return;
         bd_addr_t found_address;
         gap_event_inquiry_result_get_bd_addr(packet, found_address);
@@ -266,14 +384,14 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
         inquiry_pending_ = false;
         trace(TraceKind::InquiryComplete, static_cast<std::uint32_t>(inquiry_count_),
               inquiry_match_found_ ? 1u : 0u);
-        if (!request_pending_.load(std::memory_order_acquire)) return;
+        if (!connect_requested_.load(std::memory_order_acquire)) return;
         if (inquiry_match_found_) begin_sdp_query();
         else query_next_remote_name();
         return;
     }
     if (event == HCI_EVENT_REMOTE_NAME_REQUEST_COMPLETE && name_query_pending_) {
         name_query_pending_ = false;
-        if (!request_pending_.load(std::memory_order_acquire)) return;
+        if (!connect_requested_.load(std::memory_order_acquire)) return;
         const std::size_t target_length = std::strlen(printer_name_.data());
         const std::uint8_t name_status = hci_event_remote_name_request_complete_get_status(packet);
         if (hci_event_remote_name_request_complete_get_status(packet) == ERROR_CODE_SUCCESS &&
@@ -294,31 +412,37 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
         return;
     }
     if (event == RFCOMM_EVENT_CHANNEL_OPENED) {
+        rfcomm_open_pending_ = false;
         const std::uint8_t status = rfcomm_event_channel_opened_get_status(packet);
         trace(TraceKind::RfcommOpen, status,
               status == ERROR_CODE_SUCCESS ? rfcomm_event_channel_opened_get_max_frame_size(packet) : 0);
         if (status != ERROR_CODE_SUCCESS) {
-            if (request_pending_.load(std::memory_order_acquire)) {
+            if (connect_requested_.load(std::memory_order_acquire)) {
                 if (status == L2CAP_CONNECTION_PIN_OR_LINK_KEY_MISSING && !link_key_retry_done_) {
                     link_key_retry_done_ = true;
                     gap_drop_link_key_for_bd_addr(address_.data());
                     if (rfcomm_create_channel(&BluetoothPrinter::packet_handler, address_.data(),
-                                              rfcomm_server_channel_, nullptr) == ERROR_CODE_SUCCESS) return;
+                                              rfcomm_server_channel_, nullptr) == ERROR_CODE_SUCCESS) {
+                        rfcomm_open_pending_ = true;
+                        return;
+                    }
                 }
-                if (inquiry_attempted_) fail();
+                if (inquiry_attempted_) fail_connection();
                 else begin_inquiry();
             }
             return;
         }
         rfcomm_cid_ = rfcomm_event_channel_opened_get_rfcomm_cid(packet);
         rfcomm_mtu_ = rfcomm_event_channel_opened_get_max_frame_size(packet);
-        if (!request_pending_.load(std::memory_order_acquire)) {
-            rfcomm_disconnect(rfcomm_cid_);
-            rfcomm_cid_ = 0;
+        hci_connection_handle_ = rfcomm_event_channel_opened_get_con_handle(packet);
+        if (!connect_requested_.load(std::memory_order_acquire)) {
+            close_link();
             return;
         }
-        status_.store(PrintStatus::Printing, std::memory_order_release);
-        rfcomm_request_can_send_now_event(rfcomm_cid_);
+        connect_requested_.store(false, std::memory_order_release);
+        connected_.store(true, std::memory_order_release);
+        connection_state_.store(ConnectionState::Connected, std::memory_order_release);
+        status_.store(PrintStatus::Idle, std::memory_order_release);
         return;
     }
     if (event == RFCOMM_EVENT_CAN_SEND_NOW) {
@@ -326,9 +450,17 @@ void BluetoothPrinter::handle_packet(const std::uint8_t packet_type, const std::
         return;
     }
     if (event == RFCOMM_EVENT_CHANNEL_CLOSED) {
-        trace(TraceKind::RfcommClosed);
+        const std::uint16_t closed_cid = rfcomm_event_channel_closed_get_rfcomm_cid(packet);
+        trace(TraceKind::RfcommClosed, closed_cid);
+        if (closed_cid != rfcomm_cid_) return;
         rfcomm_cid_ = 0;
-        if (request_pending_.load(std::memory_order_acquire)) fail();
+        rfcomm_mtu_ = 0;
+        if (hci_connection_handle_ == HCI_CON_HANDLE_INVALID) disconnect_pending_ = false;
+        connected_.store(false, std::memory_order_release);
+        if (connection_state_.load(std::memory_order_acquire) == ConnectionState::Connected) {
+            connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
+        }
+        if (print_pending_.load(std::memory_order_acquire)) fail_print();
     }
 }
 
@@ -346,20 +478,23 @@ void BluetoothPrinter::handle_sdp(const std::uint8_t packet_type, const std::uin
     if (hci_event_packet_get_type(packet) != SDP_EVENT_QUERY_COMPLETE) return;
     query_pending_ = false;
     trace(TraceKind::SdpComplete, sdp_event_query_complete_get_status(packet), rfcomm_server_channel_);
-    if (!request_pending_.load(std::memory_order_acquire)) return;
+    if (!connect_requested_.load(std::memory_order_acquire)) return;
     if (sdp_event_query_complete_get_status(packet) != ERROR_CODE_SUCCESS || rfcomm_server_channel_ == 0) {
-        if (inquiry_attempted_) fail();
+        if (inquiry_attempted_) fail_connection();
         else begin_inquiry();
         return;
     }
-    if (rfcomm_create_channel(&BluetoothPrinter::packet_handler, address_.data(), rfcomm_server_channel_, nullptr) != 0) {
-        if (inquiry_attempted_) fail();
+    if (rfcomm_create_channel(&BluetoothPrinter::packet_handler, address_.data(), rfcomm_server_channel_, nullptr) ==
+        ERROR_CODE_SUCCESS) {
+        rfcomm_open_pending_ = true;
+    } else {
+        if (inquiry_attempted_) fail_connection();
         else begin_inquiry();
     }
 }
 
 void BluetoothPrinter::begin_sdp_query() {
-    if (query_pending_ || !request_pending_.load(std::memory_order_acquire)) return;
+    if (query_pending_ || !connect_requested_.load(std::memory_order_acquire)) return;
     query_pending_ = true;
     rfcomm_server_channel_ = 0;
     const std::uint8_t result = sdp_client_query_rfcomm_channel_and_name_for_uuid(
@@ -367,14 +502,16 @@ void BluetoothPrinter::begin_sdp_query() {
     trace(TraceKind::SdpStart, result);
     if (result != ERROR_CODE_SUCCESS) {
         query_pending_ = false;
-        if (inquiry_attempted_) fail();
+        if (result == SDP_QUERY_BUSY) return;
+        if (inquiry_attempted_) fail_connection();
         else begin_inquiry();
     }
 }
 
 void BluetoothPrinter::begin_inquiry() {
-    if (inquiry_attempted_ || !request_pending_.load(std::memory_order_acquire)) {
-        fail();
+    if (!connect_requested_.load(std::memory_order_acquire)) return;
+    if (inquiry_attempted_) {
+        fail_connection();
         return;
     }
     inquiry_attempted_ = true;
@@ -388,7 +525,7 @@ void BluetoothPrinter::begin_inquiry() {
     trace(TraceKind::InquiryStart, static_cast<std::uint32_t>(result));
     if (result != 0) {
         inquiry_pending_ = false;
-        fail();
+        fail_connection();
     }
 }
 
@@ -404,11 +541,11 @@ void BluetoothPrinter::query_next_remote_name() {
             return;
         }
     }
-    fail();
+    fail_connection();
 }
 
 void BluetoothPrinter::send_next_band() {
-    if (rfcomm_cid_ == 0 || !request_pending_.load(std::memory_order_acquire) || printer_flow_paused_) return;
+    if (rfcomm_cid_ == 0 || !print_pending_.load(std::memory_order_acquire) || printer_flow_paused_) return;
     if (tx_offset_ == tx_length_) {
         if (!header_sent_) {
             band_buffer_[0] = 0x1b;
@@ -424,7 +561,7 @@ void BluetoothPrinter::send_next_band() {
             header_sent_ = true;
         } else if (encoder_.band_index() < encoder_.band_count()) {
             if (!encoder_.next_band(band_buffer_.data(), band_buffer_.size(), tx_length_)) {
-                fail();
+                fail_print();
                 return;
             }
             tx_offset_ = 0;
@@ -442,7 +579,7 @@ void BluetoothPrinter::send_next_band() {
             tx_offset_ = 0;
             footer_sent_ = true;
         } else {
-            request_pending_.store(false, std::memory_order_release);
+            print_pending_.store(false, std::memory_order_release);
             status_.store(PrintStatus::Success, std::memory_order_release);
             trace(TraceKind::JobComplete, static_cast<std::uint32_t>(progress()));
             return;
@@ -451,19 +588,39 @@ void BluetoothPrinter::send_next_band() {
     const std::size_t frame_limit = rfcomm_mtu_ == 0 ? 512 : rfcomm_mtu_;
     const std::size_t chunk = std::min(frame_limit, tx_length_ - tx_offset_);
     if (rfcomm_send(rfcomm_cid_, band_buffer_.data() + tx_offset_, static_cast<std::uint16_t>(chunk)) != ERROR_CODE_SUCCESS) {
-        fail();
+        fail_print_link();
         return;
     }
     tx_offset_ += chunk;
     progress_.fetch_add(chunk, std::memory_order_acq_rel);
-    rfcomm_request_can_send_now_event(rfcomm_cid_);
+    request_can_send_now();
 }
 
-void BluetoothPrinter::fail() {
+bool BluetoothPrinter::request_can_send_now() {
+    if (rfcomm_cid_ != 0 && rfcomm_request_can_send_now_event(rfcomm_cid_) == ERROR_CODE_SUCCESS) return true;
+    fail_print_link();
+    return false;
+}
+
+void BluetoothPrinter::fail_connection() {
     trace(TraceKind::Failure, rfcomm_cid_, rfcomm_server_channel_);
-    request_pending_.store(false, std::memory_order_release);
-    query_pending_ = false;
+    connect_requested_.store(false, std::memory_order_release);
+    connect_queued_ = false;
+    connected_.store(false, std::memory_order_release);
+    connection_state_.store(ConnectionState::Error, std::memory_order_release);
+}
+
+void BluetoothPrinter::fail_print() {
+    trace(TraceKind::Failure, rfcomm_cid_, rfcomm_server_channel_);
+    print_pending_.store(false, std::memory_order_release);
     status_.store(PrintStatus::Error, std::memory_order_release);
+}
+
+void BluetoothPrinter::fail_print_link() {
+    fail_print();
+    connected_.store(false, std::memory_order_release);
+    connection_state_.store(ConnectionState::Error, std::memory_order_release);
+    close_link();
 }
 
 }  // namespace bt

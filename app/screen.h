@@ -12,6 +12,9 @@
 namespace app::screen {
 
 bool draw_menu(std::uint8_t selection);
+bool draw_m3_menu(std::uint8_t selection, bool connected);
+bool draw_m3_pairing(std::uint8_t selection, std::string_view status);
+bool draw_paired_badge();
 bool draw_file_list(const storage::GbrCatalog& catalog, std::size_t selection, bool bluetooth = false);
 bool draw_printing(std::size_t sent, std::size_t total, bool can_cancel = false);
 bool draw_block_indicator(std::size_t index, std::size_t count);

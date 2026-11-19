@@ -13,9 +13,11 @@
 
 namespace bt {
 
-enum class PrintStatus : std::uint8_t { Disabled, Idle, Connecting, Printing, Success, Error };
+enum class PrintStatus : std::uint8_t { Disabled, Idle, Printing, Success, Error };
+enum class ConnectionState : std::uint8_t { Disconnected, Connecting, Connected, Error };
 
 enum class TraceKind : std::uint8_t {
+    ConnectRequest, DisconnectRequest, ConnectionTimeout,
     JobStart, HciState, HciLink, PinRequest, SspConfirmation,
     SdpStart, SdpService, SdpComplete, InquiryStart, InquiryMatch,
     InquiryComplete, NameRequest, NameComplete, RfcommOpen,
@@ -37,14 +39,19 @@ const char* trace_kind_name(TraceKind kind);
 class BluetoothPrinter {
   public:
     bool initialize(const config::M3Config& config);
+    bool connect(bool forget_link_key);
+    void disconnect();
+    void service();
     // Consecutive GBR blocks share one ESC/POS image stream. Only the first
     // block initializes the printer, and only the last block feeds the paper.
     bool start(const std::uint8_t* image, std::size_t size, std::uint8_t palette,
                bool first_block, bool last_block);
-    void cancel();
 
     bool initialized() const { return initialized_.load(std::memory_order_acquire); }
     bool hci_ready() const { return hci_ready_.load(std::memory_order_acquire); }
+    // True only while the printer's RFCOMM channel is open.
+    bool connected() const { return connected_.load(std::memory_order_acquire); }
+    ConnectionState connection_state() const { return connection_state_.load(std::memory_order_acquire); }
     PrintStatus status() const { return status_.load(std::memory_order_acquire); }
     std::size_t progress() const { return progress_.load(std::memory_order_acquire); }
     std::size_t total() const { return total_.load(std::memory_order_acquire); }
@@ -63,8 +70,12 @@ class BluetoothPrinter {
     void begin_sdp_query();
     void begin_inquiry();
     void query_next_remote_name();
+    void close_link();
     void send_next_band();
-    void fail();
+    bool request_can_send_now();
+    void fail_connection();
+    void fail_print();
+    void fail_print_link();
     void trace(TraceKind kind, std::uint32_t value = 0, std::uint32_t extra = 0);
 
     struct InquiryDevice {
@@ -80,11 +91,14 @@ class BluetoothPrinter {
     std::array<char, 32> printer_name_{};
     std::array<char, 8> pin_{};
     std::atomic<PrintStatus> status_{PrintStatus::Disabled};
+    std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
+    std::atomic_bool connected_{false};
     std::atomic<std::size_t> progress_{0};
     std::atomic<std::size_t> total_{0};
     std::atomic_bool initialized_{false};
     std::atomic_bool hci_ready_{false};
-    std::atomic_bool request_pending_{false};
+    std::atomic_bool connect_requested_{false};
+    std::atomic_bool print_pending_{false};
     std::array<TraceEvent, TRACE_CAPACITY> trace_events_{};
     std::atomic<std::uint8_t> trace_head_{0};
     std::atomic<std::uint8_t> trace_tail_{0};
@@ -92,7 +106,13 @@ class BluetoothPrinter {
 
     std::uint16_t rfcomm_cid_ = 0;
     std::uint16_t rfcomm_mtu_ = 0;
+    std::uint16_t hci_connection_handle_ = 0xffff;
     std::uint8_t rfcomm_server_channel_ = 0;
+    bool connect_queued_ = false;
+    bool forget_link_key_queued_ = false;
+    bool rfcomm_open_pending_ = false;
+    bool disconnect_pending_ = false;
+    std::uint64_t connect_started_ms_ = 0;
     bool header_sent_ = false;
     bool footer_sent_ = false;
     bool printer_flow_paused_ = false;

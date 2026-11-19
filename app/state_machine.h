@@ -12,10 +12,12 @@ enum class Key : std::uint8_t { None, Up, Down, Left, Right, Confirm };
 enum class Mode : std::uint8_t { Menu, M1, M2, M3 };
 enum class MenuPage : std::uint8_t { Select, Error };
 enum class M2Page : std::uint8_t { List, Preview, Printing, Error };
+enum class M3Page : std::uint8_t { Menu, Pairing, Files };
 enum class Action : std::uint8_t {
     None, Redraw, BrightnessDown, BrightnessUp, PaletteDown, PaletteUp,
     EnterM1, ExitM1, EnterM2, ExitM2, EnterM3, ExitM3, ConfirmM1Preview,
     OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint, CancelM3Print,
+    PairM3, DisconnectM3, EnterM3Files,
 };
 
 class StateMachine {
@@ -23,19 +25,24 @@ class StateMachine {
     Mode mode() const { return mode_; }
     MenuPage menu_page() const { return menu_page_; }
     M2Page m2_page() const { return m2_page_; }
+    M3Page m3_page() const { return m3_page_; }
+    std::uint8_t m3_selection() const { return m3_selection_; }
+    std::uint8_t m3_pair_selection() const { return m3_pair_selection_; }
     std::uint8_t menu_selection() const { return menu_selection_; }
     std::size_t file_count() const { return file_count_; }
     std::size_t selected_file() const { return selected_file_; }
     std::size_t selected_block() const { return selected_block_; }
 
-    Action on_key(Key key, bool m1_waiting, bool m1_preview);
+    Action on_key(Key key, bool m1_waiting, bool m1_preview, bool m3_connected);
     void menu_failed();
     void enter_m1();
     void exit_m1();
     void enter_m2(std::size_t file_count);
     void exit_m2();
-    void enter_m3(std::size_t file_count);
+    void enter_m3();
     void exit_m3();
+    void m3_connection_lost();
+    void m3_files_ready(std::size_t file_count);
     void file_opened(std::size_t block_count);
     void file_failed();
     void file_closed();
@@ -46,7 +53,10 @@ class StateMachine {
     Mode mode_ = Mode::Menu;
     MenuPage menu_page_ = MenuPage::Select;
     M2Page m2_page_ = M2Page::List;
+    M3Page m3_page_ = M3Page::Menu;
     std::uint8_t menu_selection_ = 0;
+    std::uint8_t m3_selection_ = 0;
+    std::uint8_t m3_pair_selection_ = 0;
     std::size_t file_count_ = 0;
     std::size_t selected_file_ = 0;
     std::size_t block_count_ = 0;

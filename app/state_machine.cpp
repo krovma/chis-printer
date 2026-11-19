@@ -5,7 +5,8 @@
 
 namespace app {
 
-Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_preview) {
+Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_preview,
+                            const bool m3_connected) {
     switch (mode_) {
         case Mode::Menu:
             if (menu_page_ == MenuPage::Error) {
@@ -39,9 +40,57 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
             return Action::None;
         case Mode::M2:
         case Mode::M3:
+            if (mode_ == Mode::M3) {
+                if (m3_page_ == M3Page::Menu) {
+                    if (key == Key::Left) return Action::ExitM3;
+                    if (key == Key::Up && m3_selection_ > 0) {
+                        --m3_selection_;
+                        return Action::Redraw;
+                    }
+                    if (key == Key::Down && m3_selection_ < 1) {
+                        ++m3_selection_;
+                        return Action::Redraw;
+                    }
+                    if (key == Key::Confirm) {
+                        if (m3_selection_ == 0 || !m3_connected) {
+                            m3_page_ = M3Page::Pairing;
+                            m3_pair_selection_ = 0;
+                        } else {
+                            m3_page_ = M3Page::Files;
+                            m2_page_ = M2Page::List;
+                            return Action::EnterM3Files;
+                        }
+                        return Action::Redraw;
+                    }
+                    return Action::None;
+                }
+                if (m3_page_ == M3Page::Pairing) {
+                    if (key == Key::Left) {
+                        m3_page_ = M3Page::Menu;
+                        return Action::Redraw;
+                    }
+                    if (key == Key::Up && m3_pair_selection_ > 0) {
+                        --m3_pair_selection_;
+                        return Action::Redraw;
+                    }
+                    if (key == Key::Down && m3_pair_selection_ < 1) {
+                        ++m3_pair_selection_;
+                        return Action::Redraw;
+                    }
+                    if (key == Key::Confirm) {
+                        return m3_pair_selection_ == 0 ? Action::PairM3 : Action::DisconnectM3;
+                    }
+                    return Action::None;
+                }
+                if (!m3_connected) return Action::None;
+            }
             switch (m2_page_) {
                 case M2Page::List:
-                    if (key == Key::Left) return mode_ == Mode::M2 ? Action::ExitM2 : Action::ExitM3;
+                    if (key == Key::Left) {
+                        if (mode_ == Mode::M2) return Action::ExitM2;
+                        m3_page_ = M3Page::Menu;
+                        return Action::Redraw;
+                    }
                     if (key == Key::Up && selected_file_ > 0) {
                         --selected_file_;
                         return Action::Redraw;
@@ -89,15 +138,29 @@ void StateMachine::exit_m2() {
     mode_ = Mode::Menu;
     menu_page_ = MenuPage::Select;
 }
-void StateMachine::enter_m3(const std::size_t file_count) {
+void StateMachine::enter_m3() {
     mode_ = Mode::M3;
+    m3_page_ = M3Page::Menu;
     m2_page_ = M2Page::List;
-    file_count_ = file_count;
+    m3_selection_ = 0;
+    m3_pair_selection_ = 0;
+    file_count_ = 0;
     selected_file_ = 0;
 }
 void StateMachine::exit_m3() {
     mode_ = Mode::Menu;
     menu_page_ = MenuPage::Select;
+}
+void StateMachine::m3_connection_lost() {
+    if (mode_ != Mode::M3 || m3_page_ != M3Page::Files) return;
+    m3_page_ = M3Page::Pairing;
+    m3_pair_selection_ = 0;
+    m2_page_ = M2Page::List;
+}
+void StateMachine::m3_files_ready(const std::size_t file_count) {
+    if (mode_ != Mode::M3 || m3_page_ != M3Page::Files) return;
+    file_count_ = file_count;
+    selected_file_ = 0;
 }
 void StateMachine::file_opened(const std::size_t block_count) {
     block_count_ = block_count;

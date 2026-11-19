@@ -14,6 +14,7 @@ namespace {
 
 constexpr display::Gray4 WHITE = 0x0F;
 constexpr display::Gray4 BLACK = 0x00;
+constexpr display::Gray4 DIM = 0x08;
 constexpr std::size_t VISIBLE_FILES = 7;
 
 bool centered(const std::string_view text, const std::int16_t y) {
@@ -48,6 +49,30 @@ bool draw_menu(const std::uint8_t selection) {
            display::ui::draw_utf8("M2", 100, 117, BLACK) &&
            display::ui::draw_utf8(selection == 2 ? ">" : " ", 74, 152, BLACK) &&
            display::ui::draw_utf8("M3", 100, 152, BLACK);
+}
+
+bool draw_m3_menu(const std::uint8_t selection, const bool connected) {
+    display::clear(WHITE);
+    return centered("M3", 35) &&
+           display::ui::draw_utf8(selection == 0 ? ">" : " ", 52, 94, BLACK) &&
+           display::ui::draw_utf8("Pair", 80, 94, BLACK) &&
+           display::ui::draw_utf8(selection == 1 ? ">" : " ", 52, 137, BLACK) &&
+           display::ui::draw_utf8("Print", 80, 137, connected ? BLACK : DIM) &&
+           (connected || centered("Pair first", 190));
+}
+
+bool draw_m3_pairing(const std::uint8_t selection, const std::string_view status) {
+    display::clear(WHITE);
+    return centered("Bluetooth", 33) && centered(status, 72) &&
+           display::ui::draw_utf8(selection == 0 ? ">" : " ", 40, 116, BLACK) &&
+           display::ui::draw_utf8("Re-pair", 68, 116, BLACK) &&
+           display::ui::draw_utf8(selection == 1 ? ">" : " ", 40, 155, BLACK) &&
+           display::ui::draw_utf8("Disconnect", 68, 155, BLACK) &&
+           centered("Left back", 207);
+}
+
+bool draw_paired_badge() {
+    return display::ui::draw_utf8("PAIRED", 4, 2, BLACK);
 }
 
 bool draw_file_list(const storage::GbrCatalog& catalog, const std::size_t selection, const bool bluetooth) {
