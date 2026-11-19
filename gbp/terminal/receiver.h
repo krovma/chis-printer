@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 #include "gbp/protocol/packet.h"
 #include "gbp/protocol/rle.h"
 
@@ -35,8 +35,9 @@ class Receiver {
     std::size_t image_size() const { return image_size_; }
     const std::uint8_t* image_data() const { return image_; }
     std::uint8_t palette() const { return palette_; }
-    const format::PrintControl& print_control() const { return print_control_; }
+    const gbr::format::PrintControl& print_control() const { return print_control_; }
     bool buffer_full() const { return buffer_full_; }
+    bool take_data_group_started();
 
   private:
     void begin_packet(const protocol::Header& header);
@@ -51,13 +52,15 @@ class Receiver {
     std::size_t packet_start_size_ = 0;
     std::uint32_t data_frames_ = 0;
     std::uint8_t palette_ = 0xE4;
-    format::PrintControl print_control_ = format::DEFAULT_PRINT_CONTROL;
-    format::PrintControl pending_print_control_ = format::DEFAULT_PRINT_CONTROL;
+    gbr::format::PrintControl print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
+    gbr::format::PrintControl pending_print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
     std::uint8_t print_payload_index_ = 0;
     bool packet_failed_ = false;
     bool packet_overflow_ = false;
     bool packet_open_ = false;
     bool buffer_full_ = false;
+    bool group_started_ = false;
+    bool data_group_started_ = false;
 };
 
 }  // namespace gbp::terminal

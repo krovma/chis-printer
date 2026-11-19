@@ -20,10 +20,14 @@ ByteReply PrinterSession::feed(const std::uint8_t byte, const bool buffer_full) 
         case protocol::Event::DummyId:
             return {static_cast<std::uint8_t>(status_ | (buffer_full ? protocol::STATUS_FULL : 0)), false};
         case protocol::Event::DummyStatus:
+            {
+            const bool print_complete = completion_reply_pending_;
+            completion_reply_pending_ = false;
             if (packet_valid_) {
                 finish_packet(result.header);
             }
-            return {0, true};
+            return {0, true, print_complete};
+            }
         default:
             return {};
     }
@@ -36,17 +40,21 @@ void PrinterSession::reset() {
     unprocessed_countdown_ = 0;
     data_countdown_ = 0;
     packet_valid_ = false;
+    print_pending_ = false;
+    completion_reply_pending_ = false;
 }
 
 void PrinterSession::apply_command(const protocol::Header& header) {
     switch (static_cast<protocol::Command>(header.command)) {
         case protocol::Command::Init:
             status_ = 0;
+            print_pending_ = false;
             data_countdown_ = 6;
             unprocessed_countdown_ = 0;
             busy_countdown_ = 0;
             break;
         case protocol::Command::Print:
+            print_pending_ = true;
             busy_countdown_ = 1;
             break;
         case protocol::Command::Data:
@@ -54,6 +62,7 @@ void PrinterSession::apply_command(const protocol::Header& header) {
             break;
         case protocol::Command::Break:
             status_ = protocol::STATUS_FULL | protocol::STATUS_BUSY;
+            print_pending_ = false;
             break;
         case protocol::Command::Inquiry:
             if (unprocessed_countdown_ > 0) {
@@ -62,6 +71,11 @@ void PrinterSession::apply_command(const protocol::Header& header) {
                 }
             } else if (busy_countdown_ > 0 && --busy_countdown_ == 0) {
                 status_ &= static_cast<std::uint8_t>(~protocol::STATUS_BUSY);
+            }
+            if (print_pending_ && busy_countdown_ == 0 && unprocessed_countdown_ == 0 &&
+                (status_ & protocol::STATUS_BUSY) == 0) {
+                completion_reply_pending_ = true;
+                print_pending_ = false;
             }
             break;
     }

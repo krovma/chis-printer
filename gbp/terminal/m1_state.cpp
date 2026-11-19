@@ -17,18 +17,38 @@ std::uint32_t pack_view(const ViewState view, const std::uint32_t generation) {
 
 }  // namespace
 
-M1State::M1State() : receiver_(buffers_[0]) {}
+M1State::M1State(const std::uint32_t auto_cut_time_limit_us)
+    : receiver_(buffers_[0]), auto_cut_time_limit_us_(auto_cut_time_limit_us) {}
 
 M1State::Snapshot M1State::snapshot() const {
     const std::uint32_t word = view_word_.load(std::memory_order_acquire);
     return {static_cast<ViewState>(word & VIEW_MASK), frames_.load(std::memory_order_acquire), word >> 2};
 }
 
-void M1State::core1_on_receiver_change() {
+void M1State::core1_on_print_complete(const std::uint32_t at_us) {
+    print_completed_at_us_ = at_us;
+    completion_window_open_ = auto_cut_time_limit_us_ != 0;
+}
+
+void M1State::core1_expire_completion_window(const std::uint32_t now_us) {
+    if (completion_window_open_ &&
+        static_cast<std::uint32_t>(now_us - print_completed_at_us_) > auto_cut_time_limit_us_) {
+        completion_window_open_ = false;
+    }
+}
+
+void M1State::core1_on_receiver_change(const std::uint32_t now_us) {
+    if (receiver_.take_data_group_started()) {
+        append_current_group_ = completion_window_open_ &&
+                                static_cast<std::uint32_t>(now_us - print_completed_at_us_) <=
+                                    auto_cut_time_limit_us_;
+        completion_window_open_ = false;
+    }
     if (receiver_.state() == ViewState::Preview) {
         if (slot_.load(std::memory_order_acquire) != Slot::Empty) {
             printf("ERROR: M1 image discarded: previous frame still owned by Core0\n");
             receiver_.reset();
+            append_current_group_ = false;
             frames_.store(0, std::memory_order_release);
             view_word_.store(pack_view(ViewState::Waiting, generation_), std::memory_order_release);
             return;
@@ -36,7 +56,8 @@ void M1State::core1_on_receiver_change() {
 
         const std::uint32_t next_generation = generation_ == MAX_GENERATION ? 1 : generation_ + 1;
         handed_off_ = {receiver_.image_data(), receiver_.image_size(), receiver_.palette(),
-                       receiver_.print_control(), next_generation};
+                       receiver_.print_control(), next_generation, append_current_group_};
+        append_current_group_ = false;
         active_buffer_ ^= 1u;
         receiver_.use_buffer(buffers_[active_buffer_]);
         frames_.store(0, std::memory_order_release);

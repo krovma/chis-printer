@@ -75,6 +75,17 @@ bool draw_printing(const std::size_t sent, const std::size_t total) {
     return centered("Printing", 97) && centered(progress, 130);
 }
 
+bool draw_block_indicator(const std::size_t index, const std::size_t count) {
+    if (count <= 1) return true;
+    char label[24]{};
+    std::snprintf(label, sizeof(label), "%lu/%lu", static_cast<unsigned long>(index + 1),
+                  static_cast<unsigned long>(count));
+    for (std::uint16_t y = 0; y < 20; ++y) {
+        for (std::uint16_t x = 0; x < display::WIDTH; ++x) display::set_pixel(x, y, WHITE);
+    }
+    return centered(label, 2);
+}
+
 bool draw_error(const std::string_view message) {
     display::clear(WHITE);
     return centered(message, 108);

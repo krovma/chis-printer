@@ -67,7 +67,7 @@ PrintResult PrintJob::wait_ready(PacketTransport& transport, const char* phase, 
 }
 
 PrintResult PrintJob::run(PacketTransport& transport, const std::uint8_t* data, const std::size_t size,
-                          const format::PrintControl& print_control, std::atomic<std::size_t>& bytes_sent) {
+                          const gbr::format::PrintControl& print_control, std::atomic<std::size_t>& bytes_sent) {
     bytes_sent.store(0, std::memory_order_release);
     if (data == nullptr || size == 0 || size % 320 != 0 || size > 640 * 192) {
         printf("ERROR: GBP invalid image data=%p bytes=%lu\n", static_cast<const void*>(data),
@@ -115,7 +115,7 @@ PrintResult PrintJob::run(PacketTransport& transport, const std::uint8_t* data, 
         result = wait_ready(transport, "after DATA end", BUSY_MASK, 50);
         if (result != PrintResult::Success) return result;
 
-        format::PrintControl control = print_control;
+        gbr::format::PrintControl control = print_control;
         if (band_end != band_size) control[1] &= 0x0F;
         if (offset != size) control[1] &= 0xF0;
         printf("GBP PRINT offset=%lu control=%02X %02X %02X %02X\n",

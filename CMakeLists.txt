@@ -127,7 +127,7 @@ add_executable(kuper-printer
     gbp/protocol/packet_writer.h
     gbp/protocol/rle.cpp
     gbp/protocol/rle.h
-    gbp/format/gbr.h
+    gbr/format.h
     gbp/host/gpio_transport.cpp
     gbp/host/gpio_transport.h
     gbp/host/link_timing.h
@@ -155,8 +155,8 @@ add_executable(kuper-printer
     storage/gbr_library.cpp
     storage/gbr_library.h
     storage/gbr_filename.h
-    storage/gbp_store.cpp
-    storage/gbp_store.h
+    storage/gbr_store.cpp
+    storage/gbr_store.h
     third_party/i18n_keyval/include/i18n_keyval/i18n.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/api.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/common.hpp

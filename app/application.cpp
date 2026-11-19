@@ -21,13 +21,13 @@
 #include "app/state_machine.h"
 #include "display/ui/screen.h"
 #include "display/zjy154s0800.h"
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 #include "gbp/terminal/m1_state.h"
 #include "gbp/terminal/screen.h"
 #include "gbp/terminal/worker.h"
 #include "pin_config.h"
 #include "storage/gbr_library.h"
-#include "storage/gbp_store.h"
+#include "storage/gbr_store.h"
 
 extern "C" {
 extern char __end__;
@@ -122,6 +122,7 @@ class Application {
     Application(const bool card_mounted, const config::FirmwareConfig& config)
         : card_mounted_(card_mounted), palette_key_(config.display.palette_key),
           backlight_percent_(config.display.backlight_percent),
+          auto_cut_time_limit_us_(config.m1.auto_cut_time_limit_us),
           rx_sample_delay_us_(config.m2.rx_sample_delay_us) {}
 
     [[noreturn]] void run() {
@@ -200,7 +201,8 @@ class Application {
             dirty_ = true;
             return;
         }
-        std::unique_ptr<gbp::terminal::M1State> next{new (std::nothrow) gbp::terminal::M1State};
+        std::unique_ptr<gbp::terminal::M1State> next{
+            new (std::nothrow) gbp::terminal::M1State{auto_cut_time_limit_us_}};
         if (!next) {
             printf("ERROR: M1 buffer allocation failed\n");
             menu_error_ = "M1 error";
@@ -223,7 +225,8 @@ class Application {
         if (!frame_owned_ && m1_->acquire_frame(active_frame_)) {
             frame_owned_ = true;
             frame_displayed_or_skipped_ = false;
-            save_active_ = store_.begin(active_frame_.data, active_frame_.size, active_frame_.print_control);
+            save_active_ = store_.begin(active_frame_.data, active_frame_.size, active_frame_.print_control,
+                                        active_frame_.append_to_previous);
             dirty_ = true;
         }
 
@@ -247,8 +250,8 @@ class Application {
 
         if (save_active_) {
             const auto result = store_.step();
-            if (result == storage::GbpStore::StepResult::Complete ||
-                result == storage::GbpStore::StepResult::Error) {
+            if (result == storage::GbrStore::StepResult::Complete ||
+                result == storage::GbrStore::StepResult::Error) {
                 save_active_ = false;
             }
         }
@@ -281,10 +284,27 @@ class Application {
         if (progress != drawn_print_progress_) dirty_ = true;
         const auto result = worker.print_result();
         if (result == gbp::host::PrintResult::None || worker.mode() != gbp::terminal::Worker::Mode::Idle) return;
+        if (result == gbp::host::PrintResult::Success) {
+            printed_bytes_ += image_.size();
+            if (image_.block_index() + 1 < image_.block_count()) {
+                if (image_.next_block()) {
+                    start_m2_block();
+                    dirty_ = true;
+                    return;
+                }
+                printf("ERROR: GBR next block read failed\n");
+                error_text_ = "GBR error";
+                image_.clear();
+                state_.print_finished(false);
+                dirty_ = true;
+                return;
+            }
+        }
         if (result != gbp::host::PrintResult::Success) {
             printf("ERROR: printer job failed: %s (%u), bytes sent=%lu/%lu\n",
                    gbp::host::print_result_name(result), static_cast<unsigned>(result),
-                   static_cast<unsigned long>(progress), static_cast<unsigned long>(image_.size()));
+                   static_cast<unsigned long>(printed_bytes_ + progress),
+                   static_cast<unsigned long>(image_.total_size()));
             error_text_ = "Print error";
         }
         image_.clear();
@@ -326,7 +346,7 @@ class Application {
                 char filename[storage::GBR_NAME_CAPACITY]{};
                 if (catalog_.name_at(state_.selected_file(), filename, sizeof(filename)) && image_.load(filename)) {
                     printf("M2 opened %s bytes=%lu\n", filename, static_cast<unsigned long>(image_.size()));
-                    state_.file_opened();
+                    state_.file_opened(image_.block_count());
                 } else {
                     error_text_ = "GBR error";
                     state_.file_failed();
@@ -339,12 +359,30 @@ class Application {
                 state_.file_closed();
                 dirty_ = true;
                 break;
+            case Action::PreviousBlock:
+            case Action::NextBlock:
+                if (!image_.select_block(state_.selected_block())) {
+                    printf("ERROR: GBR preview block %lu read failed\n",
+                           static_cast<unsigned long>(state_.selected_block()));
+                    image_.clear();
+                    error_text_ = "GBR error";
+                    state_.file_failed();
+                }
+                dirty_ = true;
+                break;
             case Action::StartPrint:
                 if (worker.mode() == gbp::terminal::Worker::Mode::Idle) {
-                    worker.start_print(image_.data(), image_.size(), image_.print_control(),
-                                       rx_sample_delay_us_);
-                    state_.print_started();
-                    drawn_print_progress_ = 0;
+                    if (image_.select_block(0)) {
+                        printed_bytes_ = 0;
+                        start_m2_block();
+                        state_.print_started();
+                        drawn_print_progress_ = 0;
+                    } else {
+                        printf("ERROR: GBR first block read failed\n");
+                        image_.clear();
+                        error_text_ = "GBR error";
+                        state_.file_failed();
+                    }
                     dirty_ = true;
                 }
                 break;
@@ -378,9 +416,10 @@ class Application {
                     case M2Page::List: return screen::draw_file_list(catalog_, state_.selected_file());
                     case M2Page::Preview:
                         gbp::terminal::draw_preview(image_.data(), image_.size(),
-                                                    gbp::format::preview_palette(image_.palette()));
-                        return true;
-                    case M2Page::Printing: return screen::draw_printing(worker.print_progress(), image_.size());
+                                                    gbr::format::preview_palette(image_.palette()));
+                        return screen::draw_block_indicator(image_.block_index(), image_.block_count());
+                    case M2Page::Printing:
+                        return screen::draw_printing(printed_bytes_ + worker.print_progress(), image_.total_size());
                     case M2Page::Error: return screen::draw_error(error_text_);
                 }
         }
@@ -405,14 +444,24 @@ class Application {
         dirty_ = false;
     }
 
+    void start_m2_block() {
+        const auto control = gbr::format::m2_print_control(image_.print_control());
+        printf("M2 block %lu/%lu: recorded sheets=%u, sending sheets=1\n",
+               static_cast<unsigned long>(image_.block_index() + 1),
+               static_cast<unsigned long>(image_.block_count()),
+               static_cast<unsigned>(image_.print_control()[0]));
+        worker.start_print(image_.data(), image_.size(), control, rx_sample_delay_us_);
+    }
+
     bool card_mounted_ = false;
     bool storage_ready_ = false;
     std::uint8_t palette_key_ = display::WHITE_PALETTE_KEY;
     std::uint8_t backlight_percent_ = 50;
+    std::uint32_t auto_cut_time_limit_us_ = 1'000'000;
     std::uint8_t rx_sample_delay_us_ = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
     StateMachine state_{};
     KeyScanner keys_{};
-    storage::GbpStore store_{};
+    storage::GbrStore store_{};
     storage::GbrCatalog catalog_{};
     storage::GbrImage image_{};
     std::unique_ptr<gbp::terminal::M1State> m1_{};
@@ -422,6 +471,7 @@ class Application {
     std::string_view menu_error_ = "SD CARD ERROR";
     std::string_view error_text_ = "GBR error";
     std::size_t drawn_print_progress_ = 0;
+    std::size_t printed_bytes_ = 0;
     std::uint32_t confirmation_generation_ = 0;
     bool frame_owned_ = false;
     bool frame_displayed_or_skipped_ = false;

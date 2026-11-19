@@ -33,6 +33,13 @@ int main() {
     static_assert(!gbp::host::valid_rx_sample_delay_us(11));
 
     assert(parse(BASE_CONFIG).m2.rx_sample_delay_us == 5);
+    assert(parse(BASE_CONFIG).m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 0\n").m1.auto_cut_time_limit_us == 0);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 0.25\n").m1.auto_cut_time_limit_us == 250'000);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 60\n").m1.auto_cut_time_limit_us == 60'000'000);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = -1\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = 61\n").m1.auto_cut_time_limit_us == 1'000'000);
+    assert(parse(BASE_CONFIG + "\n[M1]\nAutoCutTimeLimit = \"1\"\n").m1.auto_cut_time_limit_us == 1'000'000);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 2\n").m2.rx_sample_delay_us == 2);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 10\n").m2.rx_sample_delay_us == 10);
     assert(parse(BASE_CONFIG + "\n[m2]\nrx_sample_delay_us = 0\n").m2.rx_sample_delay_us == 5);
@@ -47,6 +54,7 @@ int main() {
     config::FirmwareConfig example_config;
     assert(config::parse_firmware_config(example_text, example_config));
     assert(example_config.display.backlight_percent == 50);
+    assert(example_config.m1.auto_cut_time_limit_us == 1'000'000);
     assert(example_config.m2.rx_sample_delay_us == 5);
 
     config::FirmwareConfig unchanged;

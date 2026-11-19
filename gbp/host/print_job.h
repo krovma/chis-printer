@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 #include "gbp/protocol/packet.h"
 
 namespace gbp::host {
@@ -37,7 +37,7 @@ class PacketTransport {
 class PrintJob {
   public:
     PrintResult run(PacketTransport& transport, const std::uint8_t* data, std::size_t size,
-                    const format::PrintControl& print_control, std::atomic<std::size_t>& bytes_sent);
+                    const gbr::format::PrintControl& print_control, std::atomic<std::size_t>& bytes_sent);
 
   private:
     PrintResult send(PacketTransport& transport, protocol::Command command, const std::uint8_t* payload,

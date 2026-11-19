@@ -3,6 +3,7 @@
 
 #include "storage/gbr_library.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <new>
@@ -88,70 +89,144 @@ bool GbrCatalog::name_at(const std::size_t index, char* output, const std::size_
 }
 
 void GbrImage::clear() {
+    if (open_) {
+        f_close(&file_);
+        open_ = false;
+    }
     data_.reset();
     size_ = 0;
-    print_control_ = gbp::format::DEFAULT_PRINT_CONTROL;
+    capacity_ = 0;
+    total_size_ = 0;
+    block_count_ = 0;
+    block_index_ = 0;
+    first_block_offset_ = 0;
+    multi_block_ = false;
+    print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
+}
+
+namespace {
+
+bool read_exact(FIL& file, std::uint8_t* output, const std::size_t size) {
+    std::size_t offset = 0;
+    while (offset < size) {
+        const UINT chunk = static_cast<UINT>(std::min<std::size_t>(size - offset, 1024));
+        UINT read = 0;
+        if (f_read(&file, output + offset, chunk, &read) != FR_OK || read != chunk) return false;
+        offset += read;
+    }
+    return true;
+}
+
+std::size_t block_payload_size(const std::uint8_t* header) {
+    if (header[0] != gbr::format::GBR_BLOCK_VERSION || header[1] != gbr::format::GBR_WIDTH) return 0;
+    const std::uint16_t height = static_cast<std::uint16_t>(header[2] | (header[3] << 8));
+    if (height == 0 || height % 8 != 0) return 0;
+    const std::size_t size = static_cast<std::size_t>(gbr::format::GBR_WIDTH) * height / 4;
+    return size <= gbp::terminal::IMAGE_CAPACITY ? size : 0;
+}
+
+}  // namespace
+
+bool GbrImage::read_payload(const std::size_t size) {
+    if (size > capacity_) {
+        std::unique_ptr<std::uint8_t[]> buffer{new (std::nothrow) std::uint8_t[size]};
+        if (!buffer) {
+            printf("ERROR: GBR allocation failed: %lu bytes\n", static_cast<unsigned long>(size));
+            return false;
+        }
+        data_ = std::move(buffer);
+        capacity_ = size;
+    }
+    if (!read_exact(file_, data_.get(), size)) return false;
+    size_ = size;
+    return true;
+}
+
+bool GbrImage::read_block() {
+    std::array<std::uint8_t, gbr::format::GBR_BLOCK_HEADER_SIZE> header{};
+    if (!read_exact(file_, header.data(), header.size())) return false;
+    const std::size_t payload_size = block_payload_size(header.data());
+    if (payload_size == 0 || !read_payload(payload_size)) return false;
+    for (std::size_t i = 0; i < print_control_.size(); ++i) print_control_[i] = header[4 + i];
+    return true;
 }
 
 bool GbrImage::load(const char* filename) {
     clear();
     char path[GBR_NAME_CAPACITY + 9]{};
     if (!copy_path(filename, path, sizeof(path))) return false;
-    FIL file{};
-    const FRESULT open_result = f_open(&file, path, FA_READ);
+    const FRESULT open_result = f_open(&file_, path, FA_READ);
     if (open_result != FR_OK) {
         printf("ERROR: GBR open %s: %d\n", path, static_cast<int>(open_result));
         return false;
     }
+    open_ = true;
 
-    std::array<std::uint8_t, gbp::format::GBR_HEADER_SIZE> header{};
-    UINT read = 0;
-    const FRESULT header_result = f_read(&file, header.data(), static_cast<UINT>(header.size()), &read);
-    const bool v1 = read >= 8 && header[4] == 1;
-    const bool v2 = read >= header.size() && header[4] == gbp::format::GBR_VERSION;
-    const std::size_t header_size = v1 ? 8 : header.size();
-    const std::uint16_t height = static_cast<std::uint16_t>(header[6] | (header[7] << 8));
-    const std::size_t payload_size = static_cast<std::size_t>(header[5]) * height / 4;
-    const bool valid = header_result == FR_OK && std::memcmp(header.data(), "KGBR", 4) == 0 &&
-                       (v1 || v2) && header[5] == gbp::format::GBR_WIDTH &&
-                       height != 0 && height % 8 == 0 &&
-                       payload_size <= gbp::terminal::IMAGE_CAPACITY &&
-                       f_size(&file) == header_size + payload_size;
+    std::array<std::uint8_t, gbr::format::GBR_FILE_HEADER_SIZE> prefix{};
+    bool valid = read_exact(file_, prefix.data(), prefix.size()) &&
+                 std::memcmp(prefix.data(), "KGBR", 4) == 0;
+    if (valid && prefix[4] == gbr::format::GBR_FILE_VERSION) {
+        multi_block_ = true;
+        block_count_ = prefix[5];
+        first_block_offset_ = gbr::format::GBR_FILE_HEADER_SIZE;
+        valid = block_count_ != 0;
+        for (std::size_t index = 0; valid && index < block_count_; ++index) {
+            std::array<std::uint8_t, gbr::format::GBR_BLOCK_HEADER_SIZE> header{};
+            valid = read_exact(file_, header.data(), header.size());
+            const std::size_t payload_size = valid ? block_payload_size(header.data()) : 0;
+            const FSIZE_t next = file_.fptr + payload_size;
+            valid = payload_size != 0 && next <= f_size(&file_) && f_lseek(&file_, next) == FR_OK;
+            total_size_ += payload_size;
+        }
+        valid = valid && file_.fptr == f_size(&file_) &&
+                f_lseek(&file_, first_block_offset_) == FR_OK && read_block();
+    } else if (valid && (prefix[4] == 1 || prefix[4] == gbr::format::GBR_BLOCK_VERSION)) {
+        block_count_ = 1;
+        std::array<std::uint8_t, gbr::format::GBR_BLOCK_HEADER_SIZE> header{};
+        header[0] = gbr::format::GBR_BLOCK_VERSION;
+        header[1] = prefix[5];
+        valid = read_exact(file_, header.data() + 2, 2);
+        if (valid && prefix[4] == gbr::format::GBR_BLOCK_VERSION) {
+            valid = read_exact(file_, header.data() + 4, 4);
+        } else {
+            for (std::size_t i = 0; i < 4; ++i) header[4 + i] = gbr::format::DEFAULT_PRINT_CONTROL[i];
+        }
+        const std::size_t payload_size = valid ? block_payload_size(header.data()) : 0;
+        valid = payload_size != 0 && file_.fptr + payload_size == f_size(&file_) &&
+                read_payload(payload_size);
+        if (valid) {
+            total_size_ = payload_size;
+            for (std::size_t i = 0; i < print_control_.size(); ++i) print_control_[i] = header[4 + i];
+        }
+    } else {
+        valid = false;
+    }
     if (!valid) {
         printf("ERROR: invalid GBR file %s\n", path);
-        f_close(&file);
-        return false;
+        clear();
     }
-    if (v1 && f_lseek(&file, 8) != FR_OK) {
-        f_close(&file);
-        return false;
-    }
+    return valid;
+}
 
-    std::unique_ptr<std::uint8_t[]> buffer{new (std::nothrow) std::uint8_t[payload_size]};
-    if (!buffer) {
-        printf("ERROR: GBR allocation failed: %lu bytes\n", static_cast<unsigned long>(payload_size));
-        f_close(&file);
-        return false;
+bool GbrImage::select_block(const std::size_t index) {
+    if (!open_ || index >= block_count_) return false;
+    if (index == block_index_) return true;
+    if (!multi_block_ || f_lseek(&file_, first_block_offset_) != FR_OK) return false;
+    for (std::size_t current = 0; current < index; ++current) {
+        std::array<std::uint8_t, gbr::format::GBR_BLOCK_HEADER_SIZE> header{};
+        if (!read_exact(file_, header.data(), header.size())) return false;
+        const std::size_t payload_size = block_payload_size(header.data());
+        if (payload_size == 0 || f_lseek(&file_, file_.fptr + payload_size) != FR_OK) return false;
     }
-    std::size_t offset = 0;
-    while (offset < payload_size) {
-        const UINT length = static_cast<UINT>((payload_size - offset) > 1024 ? 1024 : payload_size - offset);
-        read = 0;
-        const FRESULT result = f_read(&file, buffer.get() + offset, length, &read);
-        if (result != FR_OK || read != length) {
-            printf("ERROR: GBR read %s: %d\n", path, static_cast<int>(result));
-            f_close(&file);
-            return false;
-        }
-        offset += read;
-    }
-    const FRESULT close_result = f_close(&file);
-    if (close_result != FR_OK) return false;
-    if (v2) {
-        for (std::size_t i = 0; i < print_control_.size(); ++i) print_control_[i] = header[8 + i];
-    }
-    data_ = std::move(buffer);
-    size_ = payload_size;
+    if (!read_block()) return false;
+    block_index_ = index;
+    return true;
+}
+
+bool GbrImage::next_block() {
+    if (!open_ || block_index_ + 1 >= block_count_ || !multi_block_) return false;
+    if (!read_block()) return false;
+    ++block_index_;
     return true;
 }
 

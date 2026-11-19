@@ -15,7 +15,7 @@ enum class M2Page : std::uint8_t { List, Preview, Printing, Error };
 enum class Action : std::uint8_t {
     None, Redraw, BrightnessDown, BrightnessUp, PaletteDown, PaletteUp,
     EnterM1, ExitM1, EnterM2, ExitM2, ConfirmM1Preview,
-    OpenFile, CloseFile, StartPrint,
+    OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint,
 };
 
 class StateMachine {
@@ -26,6 +26,7 @@ class StateMachine {
     std::uint8_t menu_selection() const { return menu_selection_; }
     std::size_t file_count() const { return file_count_; }
     std::size_t selected_file() const { return selected_file_; }
+    std::size_t selected_block() const { return selected_block_; }
 
     Action on_key(Key key, bool m1_waiting, bool m1_preview);
     void menu_failed();
@@ -33,7 +34,7 @@ class StateMachine {
     void exit_m1();
     void enter_m2(std::size_t file_count);
     void exit_m2();
-    void file_opened();
+    void file_opened(std::size_t block_count);
     void file_failed();
     void file_closed();
     void print_started();
@@ -46,6 +47,8 @@ class StateMachine {
     std::uint8_t menu_selection_ = 0;
     std::size_t file_count_ = 0;
     std::size_t selected_file_ = 0;
+    std::size_t block_count_ = 0;
+    std::size_t selected_block_ = 0;
 };
 
 }  // namespace app

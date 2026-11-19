@@ -16,6 +16,11 @@ palette = "white"
 # Unreadable or invalid configuration uses white and 50 percent.
 backlight_percent = 50
 
+[M1]
+# Seconds after the printer reports completion in which the next DATA group
+# joins the same GBR file. Number 0..60; 0 disables joining. Default: 1 s.
+AutoCutTimeLimit = 1.0
+
 [m2]
 # SC rising edge to SI sampling delay, in microseconds (integer 2..10).
 # Omit or use an invalid value to keep the measured default of 5 us.

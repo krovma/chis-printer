@@ -20,7 +20,7 @@ void Worker::stop_receive() {
 }
 
 void Worker::start_print(const std::uint8_t* data, const std::size_t size,
-                         const format::PrintControl& control, const std::uint8_t rx_sample_delay_us) {
+                         const gbr::format::PrintControl& control, const std::uint8_t rx_sample_delay_us) {
     print_data_ = data;
     print_size_ = size;
     print_control_ = control;
@@ -54,11 +54,16 @@ void Worker::run() {
         }
 
         if (mode_.load(std::memory_order_relaxed) == Mode::Receiving) {
+            std::uint32_t completed_at_us = 0;
+            if (link_.take_print_completion(completed_at_us)) {
+                m1_->core1_on_print_complete(completed_at_us);
+            }
             m1_->core1_process_confirmation();
             if (link_.poll(m1_->receiver())) {
-                m1_->core1_on_receiver_change();
+                m1_->core1_on_receiver_change(time_us_32());
                 link_.set_buffer_full(m1_->receiver().buffer_full());
             }
+            m1_->core1_expire_completion_window(time_us_32());
         }
         tight_loop_contents();
     }

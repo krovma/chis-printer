@@ -49,6 +49,14 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                     return Action::None;
                 case M2Page::Preview:
                     if (key == Key::Left) return Action::CloseFile;
+                    if (key == Key::Up && selected_block_ > 0) {
+                        --selected_block_;
+                        return Action::PreviousBlock;
+                    }
+                    if (key == Key::Down && selected_block_ + 1 < block_count_) {
+                        ++selected_block_;
+                        return Action::NextBlock;
+                    }
                     if (key == Key::Confirm) return Action::StartPrint;
                     return Action::None;
                 case M2Page::Printing:
@@ -76,7 +84,11 @@ void StateMachine::exit_m2() {
     mode_ = Mode::Menu;
     menu_page_ = MenuPage::Select;
 }
-void StateMachine::file_opened() { m2_page_ = M2Page::Preview; }
+void StateMachine::file_opened(const std::size_t block_count) {
+    block_count_ = block_count;
+    selected_block_ = 0;
+    m2_page_ = M2Page::Preview;
+}
 void StateMachine::file_failed() { m2_page_ = M2Page::Error; }
 void StateMachine::file_closed() { m2_page_ = M2Page::List; }
 void StateMachine::print_started() { m2_page_ = M2Page::Printing; }

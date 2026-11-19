@@ -26,7 +26,15 @@ int main() {
     assert(state.on_key(Key::Confirm, false, false) == Action::OpenFile);
     assert(state.on_key(Key::Down, false, false) == Action::Redraw);
     assert(state.selected_file() == 1);
-    state.file_opened();
+    state.file_opened(3);
+    assert(state.selected_block() == 0);
+    assert(state.on_key(Key::Down, false, false) == Action::NextBlock);
+    assert(state.selected_block() == 1);
+    assert(state.on_key(Key::Down, false, false) == Action::NextBlock);
+    assert(state.selected_block() == 2);
+    assert(state.on_key(Key::Down, false, false) == Action::None);
+    assert(state.on_key(Key::Up, false, false) == Action::PreviousBlock);
+    assert(state.selected_block() == 1);
     assert(state.on_key(Key::Confirm, false, false) == Action::StartPrint);
     state.print_started();
     assert(state.on_key(Key::Left, false, false) == Action::None);

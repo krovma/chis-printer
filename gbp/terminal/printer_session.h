@@ -12,6 +12,7 @@ namespace gbp::terminal {
 struct ByteReply {
     std::uint8_t next_tx = 0;
     bool packet_end = false;
+    bool print_complete = false;
 };
 
 // Byte-level response generator. The returned byte is shifted out during the
@@ -31,6 +32,8 @@ class PrinterSession {
     std::uint8_t unprocessed_countdown_ = 0;
     std::uint8_t data_countdown_ = 0;
     bool packet_valid_ = false;
+    bool print_pending_ = false;
+    bool completion_reply_pending_ = false;
 };
 
 }  // namespace gbp::terminal

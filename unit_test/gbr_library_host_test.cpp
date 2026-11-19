@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "ff.h"
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 #include "storage/gbr_library.h"
 
 namespace {
@@ -83,8 +83,8 @@ extern "C" FRESULT f_close(FIL*) {
 
 int main() {
     files["0:/DCIM/00001.gbr"] = make_file({'K', 'G', 'B', 'R', 1, 160, 8, 0});
-    const gbp::format::PrintControl control{3, 0xA5, 0x2D, 0x7F};
-    const auto v2_header = gbp::format::make_gbr_header(160, 8, control);
+    const gbr::format::PrintControl control{3, 0xA5, 0x2D, 0x7F};
+    const auto v2_header = gbr::format::make_gbr_header(160, 8, control);
     files["0:/DCIM/photo.GBR"] = make_file({v2_header.begin(), v2_header.end()});
     files["0:/DCIM/bad.gbr"] = {'K', 'G', 'B', 'R', 2};
     files["0:/DCIM/notes.txt"] = {};
@@ -100,9 +100,39 @@ int main() {
     storage::GbrImage image;
     assert(image.load("00001.gbr"));
     assert(image.size() == 320 && image.data()[0] == 0xA5);
-    assert(image.print_control() == gbp::format::DEFAULT_PRINT_CONTROL);
+    assert(image.print_control() == gbr::format::DEFAULT_PRINT_CONTROL);
     assert(image.load("photo.GBR"));
     assert(image.print_control() == control);
+    const gbr::format::PrintControl second_control{0, 0x21, 0x1B, 0x00};
+    const auto file_header = gbr::format::make_gbr_file_header(2);
+    const auto first_block = gbr::format::make_gbr_block_header(160, 8, control);
+    const auto second_block = gbr::format::make_gbr_block_header(160, 8, second_control);
+    std::vector<std::uint8_t> multi{file_header.begin(), file_header.end()};
+    multi.insert(multi.end(), first_block.begin(), first_block.end());
+    multi.insert(multi.end(), 320, 0xA5);
+    multi.insert(multi.end(), second_block.begin(), second_block.end());
+    multi.insert(multi.end(), 320, 0x5A);
+    files["0:/DCIM/multi.gbr"] = multi;
+    assert(image.load("multi.gbr"));
+    assert(image.block_count() == 2 && image.block_index() == 0 && image.total_size() == 640);
+    assert(image.size() == 320 && image.data()[0] == 0xA5 && image.print_control() == control);
+    assert(image.next_block());
+    assert(image.block_index() == 1 && image.data()[0] == 0x5A);
+    assert(image.print_control() == second_control);
+    assert(!image.next_block());
+    assert(image.select_block(0) && image.data()[0] == 0xA5);
+    assert(image.select_block(1) && image.data()[0] == 0x5A);
+    assert(!image.select_block(2));
+
+    files["0:/DCIM/wrong-version.gbr"] = multi;
+    files["0:/DCIM/wrong-version.gbr"][6] = 3;
+    assert(!image.load("wrong-version.gbr"));
+    files["0:/DCIM/wrong-count.gbr"] = multi;
+    files["0:/DCIM/wrong-count.gbr"][5] = 1;
+    assert(!image.load("wrong-count.gbr"));
+    files["0:/DCIM/truncated.gbr"] = multi;
+    files["0:/DCIM/truncated.gbr"].pop_back();
+    assert(!image.load("truncated.gbr"));
     assert(!image.load("bad.gbr") && image.data() == nullptr);
     assert(!image.load("../photo.GBR"));
     catalog.clear();

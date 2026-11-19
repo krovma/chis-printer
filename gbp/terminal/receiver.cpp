@@ -16,6 +16,13 @@ bool Receiver::feed(const std::uint8_t byte) {
     switch (result.event) {
         case protocol::Event::PacketStart:
             begin_packet(result.header);
+            if (result.header.command == static_cast<std::uint8_t>(protocol::Command::Data) &&
+                result.header.length != 0 && !group_started_) {
+                group_started_ = true;
+                data_group_started_ = true;
+                if (state_ == ViewState::Waiting) state_ = ViewState::Receiving;
+                return true;
+            }
             if (state_ == ViewState::Waiting &&
                 (result.header.command == static_cast<std::uint8_t>(protocol::Command::Init) ||
                  (result.header.command == static_cast<std::uint8_t>(protocol::Command::Data) &&
@@ -53,13 +60,21 @@ void Receiver::reset() {
     packet_start_size_ = 0;
     data_frames_ = 0;
     palette_ = 0xE4;
-    print_control_ = format::DEFAULT_PRINT_CONTROL;
-    pending_print_control_ = format::DEFAULT_PRINT_CONTROL;
+    print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
+    pending_print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
     print_payload_index_ = 0;
     packet_failed_ = false;
     packet_overflow_ = false;
     packet_open_ = false;
     buffer_full_ = false;
+    group_started_ = false;
+    data_group_started_ = false;
+}
+
+bool Receiver::take_data_group_started() {
+    const bool started = data_group_started_;
+    data_group_started_ = false;
+    return started;
 }
 
 void Receiver::confirm_preview() {
@@ -121,6 +136,8 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
             image_size_ = 0;
             data_frames_ = 0;
             buffer_full_ = false;
+            group_started_ = false;
+            data_group_started_ = false;
             return true;
         case protocol::Command::Data:
             if (packet.header.length == 0) {
@@ -141,7 +158,7 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
                 return false;
             }
             print_control_ = pending_print_control_;
-            palette_ = format::preview_palette(print_control_[2]);
+            palette_ = gbr::format::preview_palette(print_control_[2]);
             state_ = ViewState::Preview;
             buffer_full_ = true;
             return true;

@@ -53,7 +53,7 @@ int main() {
     gbp::host::PrintJob job;
     std::atomic<std::size_t> sent{999};
     Printer printer;
-    const gbp::format::PrintControl control{2, 0xA5, 0x2D, 0x7F};
+    const gbr::format::PrintControl control{2, 0xA5, 0x2D, 0x7F};
     std::vector<std::uint8_t> image(9 * 640 + 320, 0xA5);
 
     assert(job.run(printer, image.data(), image.size(), control, sent) == gbp::host::PrintResult::Success);
@@ -61,7 +61,7 @@ int main() {
     std::size_t init_count = 0;
     std::size_t data_count = 0;
     std::size_t empty_data_count = 0;
-    std::vector<gbp::format::PrintControl> print_controls;
+    std::vector<gbr::format::PrintControl> print_controls;
     for (const auto& call : printer.calls) {
         if (call.command == gbp::protocol::Command::Init) ++init_count;
         if (call.command == gbp::protocol::Command::Data) {
@@ -75,9 +75,18 @@ int main() {
     }
     assert(init_count == 2 && data_count == 10 && empty_data_count == 2);
     assert(print_controls.size() == 2);
-    assert((print_controls[0] == gbp::format::PrintControl{2, 0xA0, 0x2D, 0x7F}));
-    assert((print_controls[1] == gbp::format::PrintControl{2, 0x05, 0x2D, 0x7F}));
+    assert((print_controls[0] == gbr::format::PrintControl{2, 0xA0, 0x2D, 0x7F}));
+    assert((print_controls[1] == gbr::format::PrintControl{2, 0x05, 0x2D, 0x7F}));
     assert(printer.pauses == 4);
+
+    Printer m2_printer;
+    const auto m2_control = gbr::format::m2_print_control({255, 0x13, 0xE4, 0x40});
+    assert(job.run(m2_printer, image.data(), 320, m2_control, sent) == gbp::host::PrintResult::Success);
+    for (const auto& call : m2_printer.calls) {
+        if (call.command == gbp::protocol::Command::Print) {
+            assert((call.payload == std::vector<std::uint8_t>{1, 0x13, 0xE4, 0x40}));
+        }
+    }
 
     assert(job.run(printer, nullptr, 320, control, sent) == gbp::host::PrintResult::InvalidImage);
     assert(sent.load() == 0);

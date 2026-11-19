@@ -9,7 +9,7 @@
 #include <memory>
 
 #include "ff.h"
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 
 namespace storage {
 
@@ -36,18 +36,35 @@ class GbrCatalog {
 
 class GbrImage {
   public:
+    ~GbrImage() { clear(); }
     bool load(const char* filename);
+    bool select_block(std::size_t index);
+    bool next_block();
     void clear();
 
     const std::uint8_t* data() const { return data_.get(); }
     std::size_t size() const { return size_; }
+    std::size_t total_size() const { return total_size_; }
+    std::size_t block_count() const { return block_count_; }
+    std::size_t block_index() const { return block_index_; }
     std::uint8_t palette() const { return print_control_[2]; }
-    const gbp::format::PrintControl& print_control() const { return print_control_; }
+    const gbr::format::PrintControl& print_control() const { return print_control_; }
 
   private:
+    bool read_block();
+    bool read_payload(std::size_t size);
+
+    FIL file_{};
+    bool open_ = false;
     std::unique_ptr<std::uint8_t[]> data_{};
     std::size_t size_ = 0;
-    gbp::format::PrintControl print_control_ = gbp::format::DEFAULT_PRINT_CONTROL;
+    std::size_t capacity_ = 0;
+    std::size_t total_size_ = 0;
+    std::size_t block_count_ = 0;
+    std::size_t block_index_ = 0;
+    FSIZE_t first_block_offset_ = 0;
+    bool multi_block_ = false;
+    gbr::format::PrintControl print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
 };
 
 }  // namespace storage

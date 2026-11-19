@@ -5,6 +5,7 @@
 
 #include <array>
 #include <climits>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <string_view>
@@ -34,6 +35,8 @@ bool parse_firmware_config(const std::string_view contents, FirmwareConfig& outp
     const toml_datum_t version = toml_get(document.toptab, "format_version");
     const toml_datum_t palette = toml_seek(document.toptab, "display.palette");
     const toml_datum_t backlight = toml_seek(document.toptab, "display.backlight_percent");
+    const toml_datum_t m1 = toml_get(document.toptab, "M1");
+    const toml_datum_t auto_cut = toml_seek(document.toptab, "M1.AutoCutTimeLimit");
     const toml_datum_t m2 = toml_get(document.toptab, "m2");
     const toml_datum_t rx_delay = toml_seek(document.toptab, "m2.rx_sample_delay_us");
 
@@ -62,6 +65,17 @@ bool parse_firmware_config(const std::string_view contents, FirmwareConfig& outp
                         static_cast<unsigned>(gbp::host::RX_SAMPLE_DELAY_DEFAULT_US),
                         static_cast<unsigned>(gbp::host::RX_SAMPLE_DELAY_MIN_US),
                         static_cast<unsigned>(gbp::host::RX_SAMPLE_DELAY_MAX_US));
+        }
+    }
+    if (valid && m1.type != TOML_UNKNOWN) {
+        const bool numeric = auto_cut.type == TOML_INT64 || auto_cut.type == TOML_FP64;
+        const double seconds = auto_cut.type == TOML_INT64 ? static_cast<double>(auto_cut.u.int64) :
+                               auto_cut.type == TOML_FP64 ? auto_cut.u.fp64 : 0.0;
+        if (m1.type == TOML_TABLE && numeric && std::isfinite(seconds) &&
+            seconds >= 0.0 && seconds <= 60.0) {
+            parsed.m1.auto_cut_time_limit_us = static_cast<std::uint32_t>(seconds * 1'000'000.0 + 0.5);
+        } else if (m1.type != TOML_TABLE || auto_cut.type != TOML_UNKNOWN) {
+            std::printf("config.toml M1.AutoCutTimeLimit invalid; using 1 s (allowed 0-60 s)\n");
         }
     }
 

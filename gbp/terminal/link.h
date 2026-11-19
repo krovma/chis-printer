@@ -20,6 +20,7 @@ class Link {
     void stop();
     bool poll(Receiver& receiver);
     void set_buffer_full(bool full);
+    bool take_print_completion(std::uint32_t& at_us);
 
   private:
     static constexpr std::uint32_t QUEUE_SIZE = 4096;
@@ -35,6 +36,7 @@ class Link {
     std::atomic<std::uint32_t> write_index_{0};
     std::atomic<bool> overflow_{false};
     std::atomic<bool> buffer_full_{false};
+    std::atomic<std::uint32_t> print_completion_us_{0};
     volatile std::uint32_t last_byte_us_ = 0;
     volatile bool synced_ = false;
     std::uint16_t preamble_ = 0;

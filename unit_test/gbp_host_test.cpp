@@ -8,7 +8,7 @@
 #include <cstring>
 #include <vector>
 
-#include "gbp/format/gbr.h"
+#include "gbr/format.h"
 #include "gbp/protocol/packet.h"
 #include "gbp/protocol/packet_writer.h"
 #include "gbp/protocol/rle.h"
@@ -49,10 +49,11 @@ void send(gbp::terminal::Receiver& receiver, const std::vector<std::uint8_t>& by
     }
 }
 
-void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes) {
+void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes,
+          const std::uint32_t now_us = 0) {
     for (const auto byte : bytes) {
         if (state.receiver().feed(byte)) {
-            state.core1_on_receiver_change();
+            state.core1_on_receiver_change(now_us);
         }
     }
 }
@@ -108,11 +109,17 @@ int main() {
     send(receiver, packet(Command::Data, 0, tile_row, true));
     assert(receiver.data_frames() == 0);
 
-    const gbp::format::PrintControl custom_print{0, 0x13, 0x2D, 0x7F};
-    const auto header = gbp::format::make_gbr_header(160, 16, custom_print);
+    const gbr::format::PrintControl custom_print{0, 0x13, 0x2D, 0x7F};
+    const auto header = gbr::format::make_gbr_header(160, 16, custom_print);
     const std::array<std::uint8_t, 12> expected_header{'K', 'G', 'B', 'R', 2, 160, 16, 0,
                                                         0, 0x13, 0x2D, 0x7F};
     assert(header == expected_header);
+    assert((gbr::format::make_gbr_file_header(2) ==
+            std::array<std::uint8_t, 6>{'K', 'G', 'B', 'R', 3, 2}));
+    assert((gbr::format::make_gbr_block_header(160, 16, custom_print) ==
+            std::array<std::uint8_t, 8>{2, 160, 16, 0, 0, 0x13, 0x2D, 0x7F}));
+    assert((gbr::format::m2_print_control(custom_print) ==
+            gbr::format::PrintControl{1, 0x13, 0x2D, 0x7F}));
 
     std::uint64_t file_number = 0;
     assert(storage::parse_gbr_filename("00099.GBR", file_number) && file_number == 99);
@@ -164,6 +171,59 @@ int main() {
     m1.release_frame();
     assert(receiver.image_size() == 0);
 
+    static gbp::terminal::M1State timed;
+    const auto init = packet(Command::Init, 0, {});
+    const auto data = packet(Command::Data, 0, tile_row);
+    const auto print = packet(Command::Print, 0, {7, 0x13, 0xE4, 0x40});
+    send(timed, init);
+    send(timed, data);
+    send(timed, print);
+    gbp::terminal::M1State::Frame timed_frame{};
+    assert(timed.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
+    timed.release_frame();
+
+    timed.core1_on_print_complete(1'000'000);
+    send(timed, init, 1'500'000);
+    send(timed, data, 2'000'000);
+    send(timed, print, 2'000'000);
+    assert(timed.acquire_frame(timed_frame) && timed_frame.append_to_previous);
+    timed.release_frame();
+
+    timed.core1_on_print_complete(3'000'000);
+    send(timed, init, 3'500'000);
+    send(timed, data, 4'000'001);
+    send(timed, print, 4'000'001);
+    assert(timed.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
+    timed.release_frame();
+
+    timed.core1_on_print_complete(0xFFFF'FF00);
+    send(timed, init, 0xFFFF'FF80);
+    send(timed, data, 0x0000'0100);
+    send(timed, print, 0x0000'0100);
+    assert(timed.acquire_frame(timed_frame) && timed_frame.append_to_previous);
+    timed.release_frame();
+
+    timed.core1_on_print_complete(100);
+    timed.core1_expire_completion_window(1'000'101);
+    send(timed, init, 0xFFFF'FF80);
+    send(timed, data, 0x0000'0100);
+    send(timed, print, 0x0000'0100);
+    assert(timed.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
+    timed.release_frame();
+
+    static gbp::terminal::M1State disabled{0};
+    send(disabled, init);
+    send(disabled, data);
+    send(disabled, print);
+    assert(disabled.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
+    disabled.release_frame();
+    disabled.core1_on_print_complete(100);
+    send(disabled, init, 101);
+    send(disabled, data, 101);
+    send(disabled, print, 101);
+    assert(disabled.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
+    disabled.release_frame();
+
     send(receiver, packet(Command::Data, 0, tile_row));
     assert(receiver.data_frames() == 1);
     assert(receiver.image_size() == 320);
@@ -179,7 +239,7 @@ int main() {
     send(receiver, packet(Command::Print, 0, {1, 0, 0, 0x40}));
     assert(receiver.state() == gbp::terminal::ViewState::Preview);
     assert(receiver.palette() == 0xE4);
-    const gbp::format::PrintControl zero_palette_print{1, 0, 0, 0x40};
+    const gbr::format::PrintControl zero_palette_print{1, 0, 0, 0x40};
     assert(receiver.print_control() == zero_palette_print);
     assert(receiver.buffer_full());
     receiver.confirm_preview();
