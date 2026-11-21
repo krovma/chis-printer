@@ -1512,7 +1512,7 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSI
 OF SUCH DAMAGE.
 ```
 
-## FatFs (ChaN)
+## FatFs (BSD-1-Clause)
 
 ```text
 /*----------------------------------------------------------------------------/
