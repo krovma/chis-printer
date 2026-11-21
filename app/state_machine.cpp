@@ -67,7 +67,7 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
             }
             return Action::None;
         case Mode::M1:
-            if (key == Key::Left && m1_waiting) {
+            if (key == Key::Left && !m1_preview) {
                 return Action::ExitM1;
             }
             if (key == Key::Confirm && m1_preview) {

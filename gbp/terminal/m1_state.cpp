@@ -43,6 +43,19 @@ void M1State::core1_on_print_complete(const uint32 at_us) {
     cut_pending_.store(true, std::memory_order_release);
 }
 
+void M1State::core1_on_receive_timeout(const uint32 now_us) {
+    const bool abandoned_append = append_current_group_;
+    append_current_group_ = false;
+    frames_.store(0, std::memory_order_release);
+    view_word_.store(pack_view(ViewState::Waiting, generation_), std::memory_order_release);
+    if (abandoned_append) {
+        // An abandoned continuation must not absorb a later, unrelated image.
+        core1_publish_cut();
+    } else {
+        core1_expire_completion_window(now_us);
+    }
+}
+
 void M1State::core1_publish_cut() {
     completion_window_open_ = false;
     cut_pending_.store(false, std::memory_order_release);
@@ -103,6 +116,22 @@ void M1State::core1_on_receiver_change(const uint32 now_us) {
         view_word_.store(pack_view(ViewState::Preview, generation_), std::memory_order_release);
         slot_.store(Slot::Ready, std::memory_order_release);
         return;
+    }
+    if (receiver_.state() == ViewState::Waiting && append_current_group_) {
+        // BREAK abandoned an appended group; finish the previously saved one.
+        core1_on_receive_timeout(now_us);
+        return;
+    }
+    if (receiver_.state() == ViewState::Waiting && completion_window_open_ &&
+        receiver_.data_frames() == 0 && !append_current_group_ &&
+        static_cast<uint32>(now_us - print_completed_at_us_) <= auto_cut_time_limit_us_) {
+        // A BREAK can also abandon a continuation before its first DATA packet.
+        core1_publish_cut();
+    }
+    if (receiver_.state() == ViewState::Waiting && completion_window_open_ &&
+        static_cast<uint32>(now_us - print_completed_at_us_) > auto_cut_time_limit_us_) {
+        // INIT/BREAK can clear Receiving after the completion deadline passed.
+        core1_publish_cut();
     }
 
     frames_.store(receiver_.data_frames(), std::memory_order_release);

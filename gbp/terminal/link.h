@@ -18,7 +18,10 @@ class Link {
   public:
     void initialize(uint32 simulated_print_time_us);
     void stop();
-    bool poll(Receiver& receiver);
+    bool poll(Receiver& receiver, bool& receive_aborted);
+    // Resets an unfinished receive after the wire has been idle, then reports
+    // the change so Core1 can publish Waiting and update AutoCut state.
+    bool expire_receive(Receiver& receiver);
     void set_buffer_full(bool full);
     bool take_print_completion(uint32& at_us);
 

@@ -261,6 +261,71 @@ int main() {
     late_group.core1_pause_after_cut();
     assert(late_group.snapshot(1'200).view == Gbp::Terminal::ViewState::Waiting);
 
+    static Gbp::Terminal::M1State stalled;
+    send(stalled, init);
+    send(stalled, data);
+    const auto partial_data = packet(Command::Data, 0, tile_row);
+    send(stalled, std::vector<uint8>(partial_data.begin(), partial_data.begin() + 20));
+    assert(stalled.receiver().image_size() > 320);
+    stalled.receiver().reset();
+    stalled.core1_on_receive_timeout(5'000'001);
+    assert(stalled.snapshot().view == Gbp::Terminal::ViewState::Waiting);
+    assert(stalled.snapshot().frames == 0);
+    assert(stalled.receiver().image_size() == 0);
+    auto fresh_row = tile_row;
+    fresh_row[0] = 0x40;
+    send(stalled, packet(Command::Data, 0, fresh_row));
+    send(stalled, print);
+    Gbp::Terminal::M1State::Frame fresh_frame{};
+    assert(stalled.acquire_frame(fresh_frame));
+    assert(fresh_frame.size == 320 && fresh_frame.data[0] == 0x40);
+    assert(!fresh_frame.append_to_previous);
+    stalled.release_frame();
+    send(stalled, packet(Command::Break, 0, {}));
+    assert(stalled.snapshot().view == Gbp::Terminal::ViewState::Waiting);
+
+    static Gbp::Terminal::M1State interrupted_append{10'000'000};
+    send(interrupted_append, init);
+    send(interrupted_append, data);
+    send(interrupted_append, print);
+    Gbp::Terminal::M1State::Frame saved_frame{};
+    assert(interrupted_append.acquire_frame(saved_frame));
+    interrupted_append.release_frame();
+    interrupted_append.request_confirmation(saved_frame.generation);
+    interrupted_append.core1_process_confirmation();
+    interrupted_append.core1_on_print_complete(1'000);
+    send(interrupted_append, init, 2'000);
+    send(interrupted_append, data, 2'000);
+    assert(!interrupted_append.snapshot(2'000).cut_pending);
+    interrupted_append.receiver().reset();
+    interrupted_append.core1_on_receive_timeout(5'002'000);
+    assert(interrupted_append.snapshot(5'002'000).view == Gbp::Terminal::ViewState::Waiting);
+    assert(!interrupted_append.snapshot(5'002'000).cut_pending);
+    assert(interrupted_append.snapshot(5'002'000).cut_sequence == 1);
+    send(interrupted_append, init, 5'003'000);
+    send(interrupted_append, data, 5'003'000);
+    send(interrupted_append, print, 5'003'000);
+    Gbp::Terminal::M1State::Frame separate_frame{};
+    assert(interrupted_append.acquire_frame(separate_frame));
+    assert(!separate_frame.append_to_previous);
+    interrupted_append.release_frame();
+
+    static Gbp::Terminal::M1State broken_append{100};
+    send(broken_append, init);
+    send(broken_append, data);
+    send(broken_append, print);
+    assert(broken_append.acquire_frame(saved_frame));
+    broken_append.release_frame();
+    broken_append.request_confirmation(saved_frame.generation);
+    broken_append.core1_process_confirmation();
+    broken_append.core1_on_print_complete(1'000);
+    send(broken_append, init, 1'050);
+    send(broken_append, data, 1'050);
+    assert(!broken_append.snapshot(1'050).cut_pending);
+    send(broken_append, packet(Command::Break, 0, {}), 1'101);
+    assert(broken_append.snapshot(1'101).view == Gbp::Terminal::ViewState::Waiting);
+    assert(broken_append.snapshot(1'101).cut_sequence == 1);
+
     disabled.core1_on_print_complete(100);
     send(disabled, init, 101);
     send(disabled, data, 101);
@@ -317,6 +382,24 @@ int main() {
         session.feed(0, false, 501'001);
     }
     assert(reply_status(session, inquiry_packet, 501'001) == done);
+
+    session.reset();
+    assert(reply_status(session, init, 600'000) == 0);
+    assert(reply_status(session, full_data_packet, 600'010) == 0);
+    session.abort_receive();
+    assert(reply_status(session, inquiry_packet, 600'020) == 0);
+
+    session.reset();
+    session.set_simulated_print_time(10'000'000);
+    assert(reply_status(session, init, 700'000) == 0);
+    assert(reply_status(session, full_data_packet, 700'010) == 0);
+    assert(reply_status(session, print_packet, 700'020) == ready);
+    session.feed(0x88, false, 700'030);
+    session.abort_receive();
+    assert(reply_status(session, inquiry_packet, 5'700'020) == printing);
+    assert(!session.take_print_completion(10'700'019, completed_at));
+    assert(session.take_print_completion(10'700'020, completed_at));
+    assert(reply_status(session, inquiry_packet, 10'700'020) == done);
 
     session.reset();
     assert(reply_status(session, init, 600'000) == 0);

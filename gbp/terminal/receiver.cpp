@@ -141,6 +141,9 @@ bool Receiver::complete_packet(const Protocol::ParseResult& packet) {
             buffer_full_ = false;
             group_started_ = false;
             data_group_started_ = false;
+            if (packet.header.command == static_cast<uint8>(Protocol::Command::Break)) {
+                state_ = ViewState::Waiting;
+            }
             return true;
         case Protocol::Command::Data:
             if (packet.header.length == 0) {

@@ -17,6 +17,8 @@ namespace {
 
 Link* active_link = nullptr;
 constexpr uint32 PACKET_TIMEOUT_US = 400'000;
+// Allow normal gaps between packets while abandoning a disconnected image.
+constexpr uint32 RECEIVE_IDLE_TIMEOUT_US = 5'000'000;
 
 }  // namespace
 
@@ -30,6 +32,7 @@ void Link::initialize(const uint32 simulated_print_time_us) {
     synced_ = false;
     preamble_ = 0;
     bit_count_ = 0;
+    last_byte_us_ = time_us_32();
     gpio_put(Board::LINK_DATA_OUT, false);
     active_link = this;
     gpio_set_irq_enabled_with_callback(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true, &Link::gpio_irq);
@@ -40,6 +43,7 @@ void Link::stop() {
     gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
     active_link = nullptr;
     reset_wire();
+    session_.reset();
     read_index_.store(0, std::memory_order_relaxed);
     write_index_.store(0, std::memory_order_relaxed);
     gpio_set_dir(Board::LINK_CLOCK, GPIO_IN);
@@ -116,7 +120,7 @@ bool Link::dequeue(uint8& byte) {
 }
 
 void Link::reset_wire() {
-    session_.reset();
+    session_.abort_receive();
     synced_ = false;
     preamble_ = 0;
     bit_count_ = 0;
@@ -125,15 +129,20 @@ void Link::reset_wire() {
     gpio_put(Board::LINK_DATA_OUT, false);
 }
 
-bool Link::poll(Receiver& receiver) {
+bool Link::poll(Receiver& receiver, bool& receive_aborted) {
     bool changed = false;
+    receive_aborted = false;
     if (overflow_.exchange(false, std::memory_order_relaxed)) {
         printf("Game Boy link receive queue overflow\n");
         gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
         read_index_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
-        receiver.abort_packet();
+        receive_aborted = receiver.state() == ViewState::Receiving;
+        if (receive_aborted) receiver.reset();
+        else receiver.abort_packet();
         reset_wire();
         gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
+        set_buffer_full(receiver.buffer_full());
+        return false;
     }
 
     uint8 byte = 0;
@@ -143,17 +152,43 @@ bool Link::poll(Receiver& receiver) {
             break;
         }
     }
-    set_buffer_full(receiver.buffer_full());
-
-    if (synced_ && static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
+    if (synced_ && read_index_.load(std::memory_order_relaxed) ==
+                       write_index_.load(std::memory_order_acquire) &&
+        static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
         gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
-        if (synced_ && static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
-            receiver.abort_packet();
+        if (synced_ && read_index_.load(std::memory_order_relaxed) ==
+                           write_index_.load(std::memory_order_acquire) &&
+            static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
+            receive_aborted = receive_aborted || receiver.state() == ViewState::Receiving;
+            if (receive_aborted) receiver.reset();
+            else receiver.abort_packet();
             reset_wire();
         }
         gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
     }
+    set_buffer_full(receiver.buffer_full());
     return changed;
+}
+
+bool Link::expire_receive(Receiver& receiver) {
+    if (receiver.state() != ViewState::Receiving ||
+        read_index_.load(std::memory_order_relaxed) != write_index_.load(std::memory_order_acquire) ||
+        static_cast<uint32>(time_us_32() - last_byte_us_) <= RECEIVE_IDLE_TIMEOUT_US) {
+        return false;
+    }
+
+    gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
+    const bool expired = receiver.state() == ViewState::Receiving &&
+                         read_index_.load(std::memory_order_relaxed) ==
+                             write_index_.load(std::memory_order_acquire) &&
+                         static_cast<uint32>(time_us_32() - last_byte_us_) > RECEIVE_IDLE_TIMEOUT_US;
+    if (expired) {
+        receiver.reset();
+        reset_wire();
+        buffer_full_.store(false, std::memory_order_relaxed);
+    }
+    gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
+    return expired;
 }
 
 void Link::set_buffer_full(const bool full) {

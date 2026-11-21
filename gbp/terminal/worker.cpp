@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Ken(github.com/krovma)
 
 #include "gbp/terminal/worker.h"
+
+#include <cstdio>
+
 #include "types.h"
 
 #include "gbp/host/gpio_transport.h"
@@ -65,9 +68,23 @@ void Worker::run() {
             }
             m1_->core1_process_confirmation();
             bool cut_expired = m1_->core1_expire_completion_window(time_us_32());
-            if (!cut_expired && link_.poll(m1_->receiver())) {
-                m1_->core1_on_receiver_change(time_us_32());
-                link_.set_buffer_full(m1_->receiver().buffer_full());
+            bool receive_aborted = false;
+            if (!cut_expired) {
+                const uint32 stale_frames = m1_->receiver().data_frames();
+                const bool changed = link_.poll(m1_->receiver(), receive_aborted);
+                if (receive_aborted) {
+                    m1_->core1_on_receive_timeout(time_us_32());
+                    printf("M1 receive interrupted: discarded %lu data packets\n",
+                           static_cast<unsigned long>(stale_frames));
+                } else if (changed) {
+                    m1_->core1_on_receiver_change(time_us_32());
+                }
+            }
+            const uint32 stale_frames = m1_->receiver().data_frames();
+            if (link_.expire_receive(m1_->receiver())) {
+                m1_->core1_on_receive_timeout(time_us_32());
+                printf("M1 receive timeout: discarded %lu data packets\n",
+                       static_cast<unsigned long>(stale_frames));
             }
             cut_expired = m1_->core1_expire_completion_window(time_us_32()) || cut_expired ||
                           m1_->cut_sequence() != cut_before_poll;

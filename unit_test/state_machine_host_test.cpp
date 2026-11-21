@@ -17,7 +17,8 @@ int main() {
     assert(state.menu_page() == MenuPage::Select);
     assert(state.on_key(Key::Confirm, false, false, false) == Action::EnterM1);
     state.enter_m1();
-    assert(state.on_key(Key::Left, false, false, false) == Action::None);
+    assert(state.on_key(Key::Left, false, false, false) == Action::ExitM1);
+    assert(state.on_key(Key::Left, false, true, false) == Action::None);
     assert(state.on_key(Key::Left, true, false, false) == Action::ExitM1);
     state.exit_m1();
     assert(state.on_key(Key::Down, false, false, false) == Action::Redraw);

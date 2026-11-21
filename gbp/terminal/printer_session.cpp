@@ -44,6 +44,19 @@ void PrinterSession::reset() {
     simulated_print_active_ = false;
 }
 
+void PrinterSession::abort_receive() {
+    if (pending_print_started_at_us_.load(std::memory_order_acquire) == 0) {
+        reset();
+        return;
+    }
+    // Keep the PRINT timer and its completion notification while discarding
+    // an interrupted packet or the next unfinished image.
+    parser_.reset();
+    packet_valid_ = false;
+    packet_reply_status_ = 0;
+    status_ &= Protocol::STATUS_FULL | Protocol::STATUS_BUSY;
+}
+
 void PrinterSession::refresh_print_status(const uint32 now_us) {
     if (!simulated_print_active_) {
         return;

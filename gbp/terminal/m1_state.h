@@ -39,6 +39,8 @@ class M1State {
     Receiver& receiver() { return receiver_; }
     void core1_on_receiver_change(uint32 now_us = 0);
     void core1_on_print_complete(uint32 at_us);
+    // Called after Link resets an interrupted receive, or after BREAK.
+    void core1_on_receive_timeout(uint32 now_us);
     bool core1_expire_completion_window(uint32 now_us);
     void core1_pause_after_cut();
     void core1_process_confirmation();

@@ -668,21 +668,20 @@ class Application {
                 leave_m13_receive();
             } else if (!m13_stop_requested_ && worker.mode() == Gbp::Terminal::Worker::Mode::Receiving &&
                        snapshot.view == Gbp::Terminal::ViewState::Waiting && !snapshot.cut_pending &&
-                       !m13_group_saved_ && !m13_save_failed_ && !frame_owned_ && !save_active_) {
+                       !m13_group_saved_ && !frame_owned_ && !save_active_) {
                 worker.stop_receive();
                 m13_stop_requested_ = true;
                 printf("M1+3 disconnected while idle; stopping Core1\n");
             }
         } else if (m13_manual_exit_requested_ && !m13_printing_ && !m13_cut_pending_) {
             if (worker.mode() == Gbp::Terminal::Worker::Mode::Idle && !frame_owned_ && !save_active_ &&
-                !m13_group_saved_ && !m13_save_failed_) {
+                !m13_group_saved_) {
                 leave_m13_receive(false);
             } else if (!m13_stop_requested_ && worker.mode() == Gbp::Terminal::Worker::Mode::Receiving &&
-                       snapshot.view == Gbp::Terminal::ViewState::Waiting && !snapshot.cut_pending &&
-                       !m13_group_saved_ && !m13_save_failed_ && !frame_owned_ && !save_active_) {
+                       !snapshot.cut_pending && !m13_group_saved_ && !frame_owned_ && !save_active_) {
                 worker.stop_receive();
                 m13_stop_requested_ = true;
-                printf("M1+3 manual exit while idle; stopping Core1\n");
+                printf("M1+3 manual exit; stopping Core1\n");
             }
         }
     }
@@ -766,8 +765,8 @@ class Application {
         }
         const auto snapshot = m1_ ? m1_->snapshot() : Gbp::Terminal::M1State::Snapshot{};
         const Action action = state_.on_key(key, snapshot.view == Gbp::Terminal::ViewState::Waiting,
-                                            snapshot.view == Gbp::Terminal::ViewState::Preview &&
-                                                !confirmation_pending_, bt_printer_.connected());
+                                            snapshot.view == Gbp::Terminal::ViewState::Preview,
+                                            bt_printer_.connected());
         switch (action) {
             case Action::None: break;
             case Action::Redraw: dirty_ = true; break;
@@ -836,9 +835,11 @@ class Application {
                 break;
             }
             case Action::ConfirmM1Preview:
-                confirmation_pending_ = true;
-                confirmation_generation_ = snapshot.generation;
-                m1_->request_confirmation(snapshot.generation);
+                if (!confirmation_pending_) {
+                    confirmation_pending_ = true;
+                    confirmation_generation_ = snapshot.generation;
+                    m1_->request_confirmation(snapshot.generation);
+                }
                 break;
             case Action::OpenFile: {
                 char filename[Storage::GBR_NAME_CAPACITY]{};

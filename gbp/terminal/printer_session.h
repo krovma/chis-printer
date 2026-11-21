@@ -22,6 +22,7 @@ class PrinterSession {
     ByteReply feed(uint8 byte, bool buffer_full, uint32 now_us);
     void set_simulated_print_time(uint32 duration_us) { simulated_print_time_us_ = duration_us; }
     bool take_print_completion(uint32 now_us, uint32& at_us);
+    void abort_receive();
     void reset();
 
   private:
