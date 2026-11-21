@@ -6,11 +6,13 @@
 #include <string_view>
 
 #include "types.h"
+#include "app/state_machine.h"
 #include "storage/gbr_library.h"
 
 namespace App::Screen {
 
 bool draw_menu(uint8 selection);
+bool draw_settings(Setting selection, bool editing, std::string_view error);
 bool draw_m3_menu(uint8 selection, bool connected, bool m13 = false);
 bool draw_m3_pairing(uint8 selection, std::string_view status);
 bool draw_m13_receive(bool countdown, uint32 remaining_us, bool awaiting_cut, bool saving,

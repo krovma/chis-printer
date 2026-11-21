@@ -9,7 +9,7 @@ int main() {
     using namespace App;
     StateMachine state;
     assert(state.mode() == Mode::Menu);
-    assert(state.on_key(Key::Left, false, false, false) == Action::BrightnessDown);
+    assert(state.on_key(Key::Left, false, false, false) == Action::None);
     state.menu_failed();
     assert(state.menu_page() == MenuPage::Error);
     assert(state.on_key(Key::Down, false, false, false) == Action::None);
@@ -110,4 +110,27 @@ int main() {
     assert(state.on_key(Key::Left, false, false, false) == Action::ExitM13);
     state.exit_m13();
     assert(state.mode() == Mode::Menu);
+
+    StateMachine settings;
+    for (int index = 0; index < 4; ++index) {
+        assert(settings.on_key(Key::Down, false, false, false) == Action::Redraw);
+    }
+    assert(settings.on_key(Key::Confirm, false, false, false) == Action::EnterSettings);
+    settings.enter_settings();
+    assert(settings.mode() == Mode::Settings);
+    assert(settings.on_key(Key::Confirm, false, false, false) == Action::BeginSetting);
+    assert(settings.setting_editing());
+    assert(settings.on_key(Key::Up, false, false, false) == Action::IncreaseSetting);
+    assert(settings.on_key(Key::Right, false, false, false) == Action::None);
+    assert(settings.on_key(Key::Left, false, false, false) == Action::CancelSetting);
+    assert(!settings.setting_editing());
+    assert(settings.on_key(Key::Down, false, false, false) == Action::Redraw);
+    assert(settings.setting_selection() == Setting::Palette);
+    assert(settings.on_key(Key::Confirm, false, false, false) == Action::BeginSetting);
+    assert(settings.on_key(Key::Confirm, false, false, false) == Action::SaveSetting);
+    settings.setting_saved();
+    assert(!settings.setting_editing());
+    assert(settings.on_key(Key::Left, false, false, false) == Action::ExitSettings);
+    settings.exit_settings();
+    assert(settings.mode() == Mode::Menu);
 }

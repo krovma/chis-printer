@@ -110,6 +110,8 @@ add_executable(kuper-printer
     app/application.h
     app/screen.cpp
     app/screen.h
+    app/settings.cpp
+    app/settings.h
     app/state_machine.cpp
     app/state_machine.h
     btprinter/bluetooth_printer.cpp
@@ -117,8 +119,13 @@ add_executable(kuper-printer
     btprinter/escpos.cpp
     btprinter/escpos.h
     btstack_config.h
-    config/firmware_config.cpp
-    config/firmware_config.h
+    config/cvar.cpp
+    config/cvar.h
+    config/printer_config.h
+    config/toml_document.cpp
+    config/toml_document.h
+    config/variables.cpp
+    config/variables.h
     display/palette.h
     display/ui/screen.cpp
     display/ui/screen.h

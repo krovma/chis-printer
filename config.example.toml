@@ -3,13 +3,13 @@
 format_version = 1
 
 [ui]
-# Locale choices: en, zh, ja. Reserved for localized UI text.
+# Locale choices: en, zh, ja.
 locale = "en"
 
 [display]
 # Palette choices: red, yellow, green, cyan, blue, magenta, white.
 palette = "white"
-# Integer 0..100; left/right buttons step through 10, 25, 50, 75, 100.
+# Integer 0..100; firmware settings panel adjusts in steps of 5 percent.
 # Unreadable or invalid configuration uses white and 50 percent.
 backlight_percent = 50
 

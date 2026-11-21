@@ -19,7 +19,6 @@ enum class Locale : uint8 {
 
 inline constexpr Locale DEFAULT_LOCALE = Locale::English;
 
-// Locale selection can later be loaded from the persisted UI configuration.
 constexpr Locale next_locale(const Locale locale) noexcept {
     switch (locale) {
         case Locale::English: return Locale::Chinese;

@@ -3,12 +3,13 @@
 
 #pragma once
 
-#include "config/firmware_config.h"
+#include <string_view>
 
 namespace Storage {
 
 // Requires the active-low card-detect GPIO to have been initialized.
 bool mount_initialized_card();
-bool load_firmware_config(Config::FirmwareConfig& output);
+bool read_config_text(std::string_view& output);
+bool write_config_value(std::string_view path, std::string_view toml_value);
 
 }  // namespace Storage

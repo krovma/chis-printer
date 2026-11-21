@@ -21,15 +21,9 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 --menu_selection_;
                 return Action::Redraw;
             }
-            if (key == Key::Down && menu_selection_ < 3) {
+            if (key == Key::Down && menu_selection_ < 4) {
                 ++menu_selection_;
                 return Action::Redraw;
-            }
-            if (key == Key::Left) {
-                return Action::BrightnessDown;
-            }
-            if (key == Key::Right) {
-                return Action::BrightnessUp;
             }
             if (key == Key::Confirm) {
                 if (menu_selection_ == 0) {
@@ -41,7 +35,35 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 if (menu_selection_ == 2) {
                     return Action::EnterM3;
                 }
-                return Action::EnterM13;
+                if (menu_selection_ == 3) {
+                    return Action::EnterM13;
+                }
+                return Action::EnterSettings;
+            }
+            return Action::None;
+        case Mode::Settings:
+            if (setting_editing_) {
+                if (key == Key::Left) {
+                    setting_editing_ = false;
+                    return Action::CancelSetting;
+                }
+                if (key == Key::Up) return Action::IncreaseSetting;
+                if (key == Key::Down) return Action::DecreaseSetting;
+                if (key == Key::Confirm) return Action::SaveSetting;
+                return Action::None;
+            }
+            if (key == Key::Left) return Action::ExitSettings;
+            if (key == Key::Up && setting_selection_ > 0) {
+                --setting_selection_;
+                return Action::Redraw;
+            }
+            if (key == Key::Down && setting_selection_ + 1 < static_cast<uint8>(Setting::Count)) {
+                ++setting_selection_;
+                return Action::Redraw;
+            }
+            if (key == Key::Confirm) {
+                setting_editing_ = true;
+                return Action::BeginSetting;
             }
             return Action::None;
         case Mode::M1:
@@ -195,6 +217,16 @@ void StateMachine::enter_m13() {
     mode_ = Mode::M13;
 }
 void StateMachine::exit_m13() { exit_m3(); }
+void StateMachine::enter_settings() {
+    mode_ = Mode::Settings;
+    setting_selection_ = 0;
+    setting_editing_ = false;
+}
+void StateMachine::exit_settings() {
+    mode_ = Mode::Menu;
+    setting_editing_ = false;
+}
+void StateMachine::setting_saved() { setting_editing_ = false; }
 void StateMachine::m13_receive_started() {
     if (mode_ == Mode::M13 && m3_page_ == M3Page::Menu) {
         m3_page_ = M3Page::Receive;

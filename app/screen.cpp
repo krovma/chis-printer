@@ -7,6 +7,7 @@
 #include <string>
 
 #include "types.h"
+#include "app/settings.h"
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
 
@@ -19,11 +20,60 @@ constexpr Display::Gray4 DIM = 0x08;
 constexpr usize VISIBLE_FILES = 7;
 
 bool centered(const std::string_view text, const int16 y) {
-    const int16 width = Display::Ui::measure_utf8(text);
+    const std::string translated = Display::Ui::translate(text);
+    const int16 width = Display::Ui::measure_utf8(translated);
     if (width < 0 || width > Display::WIDTH) {
         return false;
     }
-    return Display::Ui::draw_utf8(text, static_cast<int16>((Display::WIDTH - width) / 2), y, BLACK);
+    return Display::Ui::draw_utf8(translated, static_cast<int16>((Display::WIDTH - width) / 2), y, BLACK);
+}
+
+bool draw_label(const std::string_view text, const int16 x, const int16 y, const Display::Gray4 shade = BLACK) {
+    return Display::Ui::draw_utf8(Display::Ui::translate(text), x, y, shade);
+}
+
+bool draw_setting_value(const Setting setting, const uint32 current,
+                        const int16 x, const int16 y) {
+    char value[40]{};
+    switch (setting) {
+        case Setting::Locale: {
+            constexpr std::string_view locales[]{"locale_en", "locale_zh", "locale_ja"};
+            return Display::Ui::draw_key(locales[current], x, y, BLACK);
+        }
+        case Setting::Palette: {
+            constexpr std::string_view palettes[]{"palette_red", "palette_yellow", "palette_green", "palette_cyan",
+                                                  "palette_blue", "palette_magenta", "palette_white"};
+            return Display::Ui::draw_key(palettes[current], x, y, BLACK);
+        }
+        case Setting::Backlight:
+            std::snprintf(value, sizeof(value), "%u%%", static_cast<unsigned>(current));
+            break;
+        case Setting::AutoCut:
+        case Setting::PrintTime: {
+            const uint32 duration = current;
+            const unsigned long whole = static_cast<unsigned long>(duration / 1'000'000u);
+            const unsigned long fraction = static_cast<unsigned long>(duration % 1'000'000u);
+            if (fraction == 0) {
+                std::snprintf(value, sizeof(value), "%lus", whole);
+            } else {
+                char decimal[7]{};
+                std::snprintf(decimal, sizeof(decimal), "%06lu", fraction);
+                int digits = 6;
+                while (digits > 0 && decimal[digits - 1] == '0') --digits;
+                std::snprintf(value, sizeof(value), "%lu.%.*ss", whole, digits, decimal);
+            }
+            break;
+        }
+        case Setting::RxDelay:
+            std::snprintf(value, sizeof(value), "%u us", static_cast<unsigned>(current));
+            break;
+        case Setting::PrinterType:
+            std::snprintf(value, sizeof(value), "%s", current == 1 ? "80mm" : "58mm");
+            break;
+        case Setting::Count:
+            return false;
+    }
+    return Display::Ui::draw_utf8(value, x, y, BLACK);
 }
 
 std::string visible_name(const char* source) {
@@ -45,24 +95,44 @@ std::string visible_name(const char* source) {
 
 bool draw_menu(const uint8 selection) {
     Display::clear(WHITE);
-    return centered("Menu", 35) &&
-           Display::Ui::draw_utf8(selection == 0 ? ">" : " ", 74, 68, BLACK) &&
-           Display::Ui::draw_utf8("M1", 100, 68, BLACK) &&
-           Display::Ui::draw_utf8(selection == 1 ? ">" : " ", 74, 103, BLACK) &&
-           Display::Ui::draw_utf8("M2", 100, 103, BLACK) &&
-           Display::Ui::draw_utf8(selection == 2 ? ">" : " ", 74, 138, BLACK) &&
-           Display::Ui::draw_utf8("M3", 100, 138, BLACK) &&
-           Display::Ui::draw_utf8(selection == 3 ? ">" : " ", 74, 173, BLACK) &&
-           Display::Ui::draw_utf8("M1+3", 100, 173, BLACK);
+    constexpr std::string_view keys[]{"mode_m1", "mode_m2", "mode_m3", "mode_m13", "settings"};
+    if (!centered("menu", 14)) return false;
+    for (uint8 row = 0; row < 5; ++row) {
+        const int16 y = static_cast<int16>(49 + row * 37);
+        if (!Display::Ui::draw_utf8(selection == row ? ">" : " ", 38, y, BLACK) ||
+            !Display::Ui::draw_key(keys[row], 66, y, BLACK)) return false;
+    }
+    return true;
+}
+
+bool draw_settings(const Setting selection, const bool editing,
+                   const std::string_view error) {
+    constexpr std::string_view labels[]{"setting_locale", "setting_palette", "setting_backlight",
+                                        "setting_auto_cut", "setting_print_time", "setting_rx_delay",
+                                        "setting_printer_type"};
+    Display::clear(WHITE);
+    if (!centered("settings", 12)) return false;
+    for (uint8 row = 0; row < static_cast<uint8>(Setting::Count); ++row) {
+        const auto item = static_cast<Setting>(row);
+        const int16 y = static_cast<int16>(38 + row * 24);
+        if (!Display::Ui::draw_utf8(selection == item ? ">" : " ", 4, y, BLACK) ||
+            !Display::Ui::draw_key(labels[row], 25, y, BLACK) ||
+            !draw_setting_value(item, setting_value(item), 155, y)) return false;
+    }
+    if (editing) {
+        return centered(error.empty() ? "settings_adjust_hint" : error, 204) &&
+               centered("settings_save_hint", 221);
+    }
+    return centered("settings_edit_hint", 218);
 }
 
 bool draw_m3_menu(const uint8 selection, const bool connected, const bool m13) {
     Display::clear(WHITE);
     return centered(m13 ? "M1+3" : "M3", 35) &&
            Display::Ui::draw_utf8(selection == 0 ? ">" : " ", 52, 94, BLACK) &&
-           Display::Ui::draw_utf8("Pair", 80, 94, BLACK) &&
+           draw_label("Pair", 80, 94) &&
            Display::Ui::draw_utf8(selection == 1 ? ">" : " ", 52, 137, BLACK) &&
-           Display::Ui::draw_utf8("Print", 80, 137, connected ? BLACK : DIM) &&
+           draw_label("Print", 80, 137, connected ? BLACK : DIM) &&
            (connected || centered("Pair first", 190));
 }
 
@@ -96,14 +166,14 @@ bool draw_m3_pairing(const uint8 selection, const std::string_view status) {
     Display::clear(WHITE);
     return centered("Bluetooth", 33) && centered(status, 72) &&
            Display::Ui::draw_utf8(selection == 0 ? ">" : " ", 40, 116, BLACK) &&
-           Display::Ui::draw_utf8("Re-pair", 68, 116, BLACK) &&
+           draw_label("Re-pair", 68, 116) &&
            Display::Ui::draw_utf8(selection == 1 ? ">" : " ", 40, 155, BLACK) &&
-           Display::Ui::draw_utf8("Disconnect", 68, 155, BLACK) &&
+           draw_label("Disconnect", 68, 155) &&
            centered("Left back", 207);
 }
 
 bool draw_paired_badge() {
-    return Display::Ui::draw_utf8("PAIRED", 4, 2, BLACK);
+    return draw_label("PAIRED", 4, 2);
 }
 
 bool draw_file_list(const Storage::GbrCatalog& catalog, const usize selection, const bool bluetooth) {

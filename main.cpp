@@ -9,7 +9,7 @@
 #include "pico/stdlib.h"
 
 #include "app/application.h"
-#include "config/firmware_config.h"
+#include "config/cvar.h"
 #include "pin_config.h"
 #include "storage/sd_card.h"
 
@@ -79,10 +79,9 @@ int main() {
 #else
     sleep_ms(SD_READY_DELAY_MS);
     const bool mounted = Storage::mount_initialized_card();
-    Config::FirmwareConfig firmware_config;
-    if (mounted && !Storage::load_firmware_config(firmware_config)) {
+    if (mounted && !Config::Controller::instance().reload()) {
         printf("Using default firmware settings\n");
     }
-    App::run(mounted, firmware_config);
+    App::run(mounted);
 #endif
 }

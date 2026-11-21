@@ -7,7 +7,7 @@
 #include <atomic>
 
 #include "types.h"
-#include "config/firmware_config.h"
+#include "config/printer_config.h"
 #include "btprinter/escpos.h"
 
 namespace BtPrinter {
@@ -38,6 +38,9 @@ const char* trace_kind_name(TraceKind kind);
 class BluetoothPrinter {
   public:
     bool initialize(const Config::M3Config& config);
+    void set_printer_type(Config::PrinterType type) {
+        image_scale_ = Config::default_m3_advance(type).image_scale;
+    }
     bool connect(bool forget_link_key);
     void disconnect();
     void service();

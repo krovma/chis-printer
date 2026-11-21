@@ -19,8 +19,10 @@
 #include "pico/stdlib.h"
 
 #include "app/screen.h"
+#include "app/settings.h"
 #include "app/state_machine.h"
 #include "btprinter/bluetooth_printer.h"
+#include "config/variables.h"
 #include "display/ui/screen.h"
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
@@ -31,6 +33,7 @@
 #include "pin_config.h"
 #include "storage/gbr_library.h"
 #include "storage/gbr_store.h"
+#include "storage/sd_card.h"
 
 extern "C" {
 extern char __end__;
@@ -149,18 +152,13 @@ class KeyScanner {
 
 class Application {
   public:
-    Application(const bool card_mounted, const Config::FirmwareConfig& config)
-        : card_mounted_(card_mounted), palette_key_(config.display.palette_key),
-          backlight_percent_(config.display.backlight_percent),
-          auto_cut_time_limit_us_(config.m1.auto_cut_time_limit_us),
-          simulated_print_time_us_(config.m1.simulated_print_time_us),
-          rx_sample_delay_us_(config.m2.rx_sample_delay_us), m3_config_(config.m3) {}
+    explicit Application(const bool card_mounted) : card_mounted_(card_mounted) {}
 
     [[noreturn]] void run() {
         storage_ready_ = card_mounted_ && store_.initialize();
-        Display::Ui::initialize();
+        Display::Ui::initialize(Config::Vars::locale.get());
         Display::init();
-        Display::set_palette_key(palette_key_);
+        Display::set_palette_key(Config::Vars::palette.get());
         apply_initial_backlight();
         render();
         keys_.initialize();
@@ -255,44 +253,70 @@ class Application {
 
     void apply_initial_backlight() {
         for (usize key = 0; key < Display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
-            if (Display::BACKLIGHT_DUTY_PERCENT[key] == backlight_percent_) {
+            if (Display::BACKLIGHT_DUTY_PERCENT[key] == Config::Vars::backlight_percent.get()) {
                 Display::set_backlight_key(static_cast<uint8>(key));
                 return;
             }
         }
-        Display::set_backlight(static_cast<float>(backlight_percent_));
-    }
-
-    void adjust_brightness(const int delta) {
-        if (delta < 0) {
-            for (usize index = Display::BACKLIGHT_DUTY_PERCENT.size(); index > 0; --index) {
-                const usize key = index - 1;
-                const auto percent = Display::BACKLIGHT_DUTY_PERCENT[key];
-                if (percent < backlight_percent_) {
-                    Display::set_backlight_key(static_cast<uint8>(key));
-                    backlight_percent_ = percent;
-                    return;
-                }
-            }
-        } else {
-            for (usize key = 0; key < Display::BACKLIGHT_DUTY_PERCENT.size(); ++key) {
-                const auto percent = Display::BACKLIGHT_DUTY_PERCENT[key];
-                if (percent > backlight_percent_) {
-                    Display::set_backlight_key(static_cast<uint8>(key));
-                    backlight_percent_ = percent;
-                    return;
-                }
-            }
-        }
+        Display::set_backlight(static_cast<float>(Config::Vars::backlight_percent.get()));
     }
 
     void adjust_palette(const int delta) {
-        const int next = static_cast<int>(palette_key_) + delta;
+        const int next = static_cast<int>(Config::Vars::palette.get()) + delta;
         if (next >= 0 && next < static_cast<int>(Display::PALETTE_COUNT) &&
-            Display::set_palette_key(static_cast<uint8>(next))) {
-            palette_key_ = static_cast<uint8>(next);
+            Config::Vars::palette.set(static_cast<uint8>(next)) &&
+            Display::set_palette_key(Config::Vars::palette.get())) {
             dirty_ = true;
         }
+    }
+
+    void preview_setting(const Setting setting) {
+        switch (setting) {
+            case Setting::Locale: Display::Ui::set_locale(Config::Vars::locale.get()); break;
+            case Setting::Palette: Display::set_palette_key(Config::Vars::palette.get()); break;
+            case Setting::Backlight:
+                Display::set_backlight(static_cast<float>(Config::Vars::backlight_percent.get()));
+                break;
+            case Setting::PrinterType:
+                if (bt_printer_.initialized()) bt_printer_.set_printer_type(Config::Vars::printer_type.get());
+                break;
+            default: break;
+        }
+    }
+
+    void begin_setting() {
+        setting_original_ = setting_value(state_.setting_selection());
+        settings_error_ = {};
+        dirty_ = true;
+    }
+
+    void cancel_setting() {
+        const Setting setting = state_.setting_selection();
+        set_setting_value(setting, setting_original_, Config::WriteMode::RuntimeOnly);
+        preview_setting(setting);
+        settings_error_ = {};
+        dirty_ = true;
+    }
+
+    void adjust_setting(const int delta) {
+        const Setting setting = state_.setting_selection();
+        const uint32 next = stepped_setting_value(setting, setting_value(setting), delta);
+        if (!set_setting_value(setting, next, Config::WriteMode::RuntimeOnly)) return;
+        preview_setting(setting);
+        settings_error_ = {};
+        dirty_ = true;
+    }
+
+    void save_setting() {
+        const Setting setting = state_.setting_selection();
+        if (!set_setting_value(setting, setting_value(setting), Config::WriteMode::RuntimeAndToml)) {
+            settings_error_ = card_mounted_ ? "settings_save_failed" : "settings_sd_required";
+            dirty_ = true;
+            return;
+        }
+        settings_error_ = {};
+        state_.setting_saved();
+        dirty_ = true;
     }
 
     void enter_m1() {
@@ -303,7 +327,7 @@ class Application {
             return;
         }
         std::unique_ptr<Gbp::Terminal::M1State> next{
-            new (std::nothrow) Gbp::Terminal::M1State{auto_cut_time_limit_us_}};
+            new (std::nothrow) Gbp::Terminal::M1State{Config::Vars::auto_cut_time_limit_us.get()}};
         if (!next) {
             printf("ERROR: M1 buffer allocation failed\n");
             menu_error_ = "M1 error";
@@ -318,7 +342,7 @@ class Application {
         leaving_m1_ = false;
         confirmation_pending_ = false;
         ensure_worker_started();
-        worker.start_receive(*m1_, false, simulated_print_time_us_);
+        worker.start_receive(*m1_, false, Config::Vars::simulated_print_time_us.get());
         state_.enter_m1();
         dirty_ = true;
     }
@@ -380,7 +404,7 @@ class Application {
         printf("M3 enter t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
         printf("M3 enter: bluetooth init begin\n");
 #endif
-        const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
+        const bool bluetooth_ok = bt_printer_.initialize(Config::Vars::current_m3_config());
 #if defined(KP_BT_DEBUG)
         printf("M3 enter: bluetooth init done ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
                bt_printer_.hci_ready() ? 1u : 0u);
@@ -397,7 +421,7 @@ class Application {
     }
 
     void enter_m13() {
-        const bool bluetooth_ok = bt_printer_.initialize(m3_config_);
+        const bool bluetooth_ok = bt_printer_.initialize(Config::Vars::current_m3_config());
 #if defined(KP_BT_DEBUG)
         printf("M1+3 enter: bluetooth init ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
                bt_printer_.hci_ready() ? 1u : 0u);
@@ -419,7 +443,7 @@ class Application {
             return;
         }
         std::unique_ptr<Gbp::Terminal::M1State> next{
-            new (std::nothrow) Gbp::Terminal::M1State{auto_cut_time_limit_us_}};
+            new (std::nothrow) Gbp::Terminal::M1State{Config::Vars::auto_cut_time_limit_us.get()}};
         if (!next) {
             printf("ERROR: M1+3 buffer allocation failed\n");
             menu_error_ = "M1+3 error";
@@ -445,7 +469,7 @@ class Application {
         drawn_m13_ = {};
         drawn_m13_tenths_ = UINT32_MAX;
         ensure_worker_started();
-        worker.start_receive(*m1_, true, simulated_print_time_us_);
+        worker.start_receive(*m1_, true, Config::Vars::simulated_print_time_us.get());
         state_.m13_receive_started();
         printf("M1+3 receive started\n");
         dirty_ = true;
@@ -487,7 +511,7 @@ class Application {
                 leave_m13_receive(false);
                 return;
             }
-            worker.start_receive(*m1_, true, simulated_print_time_us_);
+            worker.start_receive(*m1_, true, Config::Vars::simulated_print_time_us.get());
             printf("M1+3 receive resumed after BT print ok=%u\n", success ? 1u : 0u);
         } else {
             leave_m13_receive();
@@ -605,7 +629,7 @@ class Application {
                     leave_m13_receive(false);
                     return;
                 }
-                worker.start_receive(*m1_, true, simulated_print_time_us_);
+                worker.start_receive(*m1_, true, Config::Vars::simulated_print_time_us.get());
                 dirty_ = true;
                 return;
             }
@@ -632,7 +656,7 @@ class Application {
 
         if (bt_printer_.connected() && m13_stop_requested_ && !m13_manual_exit_requested_ &&
             worker.mode() == Gbp::Terminal::Worker::Mode::Idle && !frame_owned_ && !save_active_) {
-            worker.start_receive(*m1_, true, simulated_print_time_us_);
+            worker.start_receive(*m1_, true, Config::Vars::simulated_print_time_us.get());
             m13_stop_requested_ = false;
             printf("M1+3 link recovered before pairing menu; receive resumed\n");
             dirty_ = true;
@@ -747,8 +771,6 @@ class Application {
         switch (action) {
             case Action::None: break;
             case Action::Redraw: dirty_ = true; break;
-            case Action::BrightnessDown: adjust_brightness(-1); break;
-            case Action::BrightnessUp: adjust_brightness(1); break;
             case Action::PaletteDown: adjust_palette(-1); break;
             case Action::PaletteUp: adjust_palette(1); break;
             case Action::EnterM1: enter_m1(); break;
@@ -759,6 +781,19 @@ class Application {
             case Action::EnterM2: enter_m2(); break;
             case Action::EnterM3: enter_m3(); break;
             case Action::EnterM13: enter_m13(); break;
+            case Action::EnterSettings:
+                state_.enter_settings();
+                dirty_ = true;
+                break;
+            case Action::ExitSettings:
+                state_.exit_settings();
+                dirty_ = true;
+                break;
+            case Action::BeginSetting: begin_setting(); break;
+            case Action::CancelSetting: cancel_setting(); break;
+            case Action::DecreaseSetting: adjust_setting(-1); break;
+            case Action::IncreaseSetting: adjust_setting(1); break;
+            case Action::SaveSetting: save_setting(); break;
             case Action::EnterM13Receive: enter_m13_receive(); break;
             case Action::ExitM13Receive:
                 m13_manual_exit_requested_ = true;
@@ -895,6 +930,9 @@ class Application {
             case Mode::Menu:
                 return state_.menu_page() == MenuPage::Error ? Screen::draw_error(menu_error_) :
                     Screen::draw_menu(state_.menu_selection());
+            case Mode::Settings:
+                return Screen::draw_settings(state_.setting_selection(), state_.setting_editing(),
+                                             settings_error_);
             case Mode::M1: return draw_m1(snapshot);
             case Mode::M2:
                 switch (state_.m2_page()) {
@@ -999,18 +1037,12 @@ class Application {
                static_cast<unsigned long>(image_.block_index() + 1),
                static_cast<unsigned long>(image_.block_count()),
                static_cast<unsigned>(image_.print_control()[0]));
-        worker.start_print(image_.data(), image_.size(), control, rx_sample_delay_us_);
+        worker.start_print(image_.data(), image_.size(), control, Config::Vars::rx_sample_delay_us.get());
     }
 
     bool card_mounted_ = false;
     bool storage_ready_ = false;
     bool worker_started_ = false;
-    uint8 palette_key_ = Display::WHITE_PALETTE_KEY;
-    uint8 backlight_percent_ = 50;
-    uint32 auto_cut_time_limit_us_ = 1'000'000;
-    uint32 simulated_print_time_us_ = 1'000'000;
-    uint8 rx_sample_delay_us_ = Gbp::Host::RX_SAMPLE_DELAY_DEFAULT_US;
-    Config::M3Config m3_config_{};
     BtPrinter::BluetoothPrinter bt_printer_{};
     BtPrinter::ConnectionState drawn_connection_state_ = BtPrinter::ConnectionState::Disconnected;
     StateMachine state_{};
@@ -1043,15 +1075,17 @@ class Application {
     bool m13_printing_ = false;
     bool m13_stop_requested_ = false;
     bool m13_manual_exit_requested_ = false;
+    uint32 setting_original_ = 0;
+    std::string_view settings_error_{};
     bool dirty_ = true;
 };
 
 }  // namespace
 
-void run(const bool card_mounted, const Config::FirmwareConfig& firmware_config) {
+void run(const bool card_mounted) {
     // The M3 raster and BT buffers are large enough to keep the application
     // object out of core 0's limited call stack.
-    static Application application(card_mounted, firmware_config);
+    static Application application(card_mounted);
     application.run();
 }
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
 #include <string_view>
 
 #include "types.h"
@@ -21,11 +22,12 @@ constexpr Display::Gray4 FOREGROUND = 0x00;
 constexpr Display::Gray4 SHADES[4]{0x0F, 0x0A, 0x05, 0x00};
 
 bool draw_centered_line(const std::string_view text, const int16 y) {
-    const int16 width = Display::Ui::measure_utf8(text);
+    const std::string translated = Display::Ui::translate(text);
+    const int16 width = Display::Ui::measure_utf8(translated);
     if (width < 0 || width > Display::WIDTH) {
         return false;
     }
-    return Display::Ui::draw_utf8(text, static_cast<int16>((Display::WIDTH - width) / 2), y, FOREGROUND);
+    return Display::Ui::draw_utf8(translated, static_cast<int16>((Display::WIDTH - width) / 2), y, FOREGROUND);
 }
 
 void draw_image(const uint8* data, const usize size, const uint8 palette) {
@@ -54,7 +56,7 @@ void draw_image(const uint8* data, const usize size, const uint8 palette) {
 }  // namespace
 
 bool draw_waiting() {
-    return Display::Ui::draw_centered_text("Waiting", BACKGROUND, FOREGROUND);
+    return Display::Ui::draw_centered_text(Display::Ui::translate("Waiting"), BACKGROUND, FOREGROUND);
 }
 
 bool draw_receiving(const uint32 data_frames) {

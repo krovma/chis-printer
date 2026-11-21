@@ -8,7 +8,7 @@
 - `draw_key()` renders any key from `resource/text/display_texts.h`.
 - `screen.h/.cpp` draws centered text on the LCD.
 
-The application initializes the translator with English. The `locale` field in
-`config.toml` is reserved for later UI localization and is not loaded yet.
+The application initializes the translator with the `ui.locale` value from
+`config.toml`. The firmware settings panel can change and save that selection.
 `resource/text/display_texts.h` supplies the font generator's glyph set;
 regenerate `resource/font/generated_font.h` after changing it.
