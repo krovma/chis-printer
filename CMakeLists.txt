@@ -162,6 +162,7 @@ add_executable(kuper-printer
     storage/gbr_filename.h
     storage/gbr_store.cpp
     storage/gbr_store.h
+    types.h
     third_party/i18n_keyval/include/i18n_keyval/i18n.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/api.hpp
     third_party/i18n_keyval/include/i18n_keyval/core/common.hpp

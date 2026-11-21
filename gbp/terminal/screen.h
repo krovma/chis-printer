@@ -3,13 +3,12 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
+#include "types.h"
 
-namespace gbp::terminal {
+namespace Gbp::Terminal {
 
 bool draw_waiting();
-bool draw_receiving(std::uint32_t data_frames);
-void draw_preview(const std::uint8_t* data, std::size_t size, std::uint8_t palette);
+bool draw_receiving(uint32 data_frames);
+void draw_preview(const uint8* data, usize size, uint8 palette);
 
-}  // namespace gbp::terminal
+}  // namespace Gbp::Terminal

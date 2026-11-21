@@ -3,26 +3,25 @@
 
 #pragma once
 
-#include <cstdint>
-
+#include "types.h"
 #include "gbp/host/link_timing.h"
 #include "gbp/host/print_job.h"
 
-namespace gbp::host {
+namespace Gbp::Host {
 
 class GpioTransport final : public PacketTransport {
   public:
-    explicit GpioTransport(std::uint8_t rx_sample_delay_us = RX_SAMPLE_DELAY_DEFAULT_US);
+    explicit GpioTransport(uint8 rx_sample_delay_us = RX_SAMPLE_DELAY_DEFAULT_US);
 
     void begin();
     void end();
-    bool send(protocol::Command command, const std::uint8_t* payload,
-              std::uint16_t length, std::uint8_t& status) override;
-    void pause_ms(std::uint32_t milliseconds) override;
+    bool send(Protocol::Command command, const uint8* payload,
+              uint16 length, uint8& status) override;
+    void pause_ms(uint32 milliseconds) override;
 
   private:
-    std::uint8_t exchange_byte(std::uint8_t value);
-    std::uint8_t rx_sample_delay_us_ = RX_SAMPLE_DELAY_DEFAULT_US;
+    uint8 exchange_byte(uint8 value);
+    uint8 rx_sample_delay_us_ = RX_SAMPLE_DELAY_DEFAULT_US;
 };
 
-}  // namespace gbp::host
+}  // namespace Gbp::Host

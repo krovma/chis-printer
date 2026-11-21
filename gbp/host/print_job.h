@@ -4,15 +4,14 @@
 #pragma once
 
 #include <atomic>
-#include <cstddef>
-#include <cstdint>
 
+#include "types.h"
 #include "gbr/format.h"
 #include "gbp/protocol/packet.h"
 
-namespace gbp::host {
+namespace Gbp::Host {
 
-enum class PrintResult : std::uint8_t { None, Success, InvalidImage, NoPrinter, PrinterError, Timeout };
+enum class PrintResult : uint8 { None, Success, InvalidImage, NoPrinter, PrinterError, Timeout };
 
 constexpr const char* print_result_name(const PrintResult result) {
     switch (result) {
@@ -29,21 +28,21 @@ constexpr const char* print_result_name(const PrintResult result) {
 class PacketTransport {
   public:
     virtual ~PacketTransport() = default;
-    virtual bool send(protocol::Command command, const std::uint8_t* payload,
-                      std::uint16_t length, std::uint8_t& status) = 0;
-    virtual void pause_ms(std::uint32_t milliseconds) = 0;
+    virtual bool send(Protocol::Command command, const uint8* payload,
+                      uint16 length, uint8& status) = 0;
+    virtual void pause_ms(uint32 milliseconds) = 0;
 };
 
 class PrintJob {
   public:
-    PrintResult run(PacketTransport& transport, const std::uint8_t* data, std::size_t size,
-                    const gbr::format::PrintControl& print_control, std::atomic<std::size_t>& bytes_sent);
+    PrintResult run(PacketTransport& transport, const uint8* data, usize size,
+                    const Gbr::Format::PrintControl& print_control, std::atomic<usize>& bytes_sent);
 
   private:
-    PrintResult send(PacketTransport& transport, protocol::Command command, const std::uint8_t* payload,
-                     std::uint16_t length, std::uint8_t& status);
+    PrintResult send(PacketTransport& transport, Protocol::Command command, const uint8* payload,
+                     uint16 length, uint8& status);
     PrintResult wait_ready(PacketTransport& transport, const char* phase,
-                           std::uint8_t mask, std::uint32_t attempts);
+                           uint8 mask, uint32 attempts);
 };
 
-}  // namespace gbp::host
+}  // namespace Gbp::Host

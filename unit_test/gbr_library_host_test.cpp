@@ -4,26 +4,26 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "types.h"
 #include "ff.h"
 #include "gbr/format.h"
 #include "storage/gbr_library.h"
 
 namespace {
 
-std::map<std::string, std::vector<std::uint8_t>> files;
+std::map<std::string, std::vector<uint8>> files;
 std::string open_path;
-std::size_t directory_index = 0;
-std::size_t directory_opens = 0;
+usize directory_index = 0;
+usize directory_opens = 0;
 
-std::vector<std::uint8_t> make_file(const std::vector<std::uint8_t>& header) {
-    std::vector<std::uint8_t> file = header;
+std::vector<uint8> make_file(const std::vector<uint8>& header) {
+    std::vector<uint8> file = header;
     file.insert(file.end(), 320, 0xA5);
     return file;
 }
@@ -55,7 +55,9 @@ extern "C" FRESULT f_closedir(DIR*) { return FR_OK; }
 extern "C" FRESULT f_open(FIL* file, const TCHAR* path, const BYTE mode) {
     assert(mode == FA_READ);
     const auto item = files.find(path);
-    if (item == files.end()) return FR_NO_FILE;
+    if (item == files.end()) {
+        return FR_NO_FILE;
+    }
     open_path = path;
     file->obj.objsize = item->second.size();
     file->fptr = 0;
@@ -64,14 +66,16 @@ extern "C" FRESULT f_open(FIL* file, const TCHAR* path, const BYTE mode) {
 
 extern "C" FRESULT f_read(FIL* file, void* output, const UINT length, UINT* read) {
     const auto& contents = files.at(open_path);
-    *read = static_cast<UINT>(std::min<std::size_t>(length, contents.size() - file->fptr));
+    *read = static_cast<UINT>(std::min<usize>(length, contents.size() - file->fptr));
     std::memcpy(output, contents.data() + file->fptr, *read);
     file->fptr += *read;
     return FR_OK;
 }
 
 extern "C" FRESULT f_lseek(FIL* file, const FSIZE_t offset) {
-    if (offset > file->obj.objsize) return FR_INVALID_PARAMETER;
+    if (offset > file->obj.objsize) {
+        return FR_INVALID_PARAMETER;
+    }
     file->fptr = offset;
     return FR_OK;
 }
@@ -83,31 +87,31 @@ extern "C" FRESULT f_close(FIL*) {
 
 int main() {
     files["0:/DCIM/00001.gbr"] = make_file({'K', 'G', 'B', 'R', 1, 160, 8, 0});
-    const gbr::format::PrintControl control{3, 0xA5, 0x2D, 0x7F};
-    const auto v2_header = gbr::format::make_gbr_header(160, 8, control);
+    const Gbr::Format::PrintControl control{3, 0xA5, 0x2D, 0x7F};
+    const auto v2_header = Gbr::Format::make_gbr_header(160, 8, control);
     files["0:/DCIM/photo.GBR"] = make_file({v2_header.begin(), v2_header.end()});
     files["0:/DCIM/bad.gbr"] = {'K', 'G', 'B', 'R', 2};
     files["0:/DCIM/notes.txt"] = {};
 
-    storage::GbrCatalog catalog;
+    Storage::GbrCatalog catalog;
     assert(catalog.refresh() && catalog.count() == 3);
     assert(directory_opens == 1);
-    char name[storage::GBR_NAME_CAPACITY]{};
+    char name[Storage::GBR_NAME_CAPACITY]{};
     assert(catalog.name_at(2, name, sizeof(name)) && std::strcmp(name, "photo.GBR") == 0);
     assert(!catalog.name_at(3, name, sizeof(name)));
     assert(directory_opens == 1);
 
-    storage::GbrImage image;
+    Storage::GbrImage image;
     assert(image.load("00001.gbr"));
     assert(image.size() == 320 && image.data()[0] == 0xA5);
-    assert(image.print_control() == gbr::format::DEFAULT_PRINT_CONTROL);
+    assert(image.print_control() == Gbr::Format::DEFAULT_PRINT_CONTROL);
     assert(image.load("photo.GBR"));
     assert(image.print_control() == control);
-    const gbr::format::PrintControl second_control{0, 0x21, 0x1B, 0x00};
-    const auto file_header = gbr::format::make_gbr_file_header(2);
-    const auto first_block = gbr::format::make_gbr_block_header(160, 8, control);
-    const auto second_block = gbr::format::make_gbr_block_header(160, 8, second_control);
-    std::vector<std::uint8_t> multi{file_header.begin(), file_header.end()};
+    const Gbr::Format::PrintControl second_control{0, 0x21, 0x1B, 0x00};
+    const auto file_header = Gbr::Format::make_gbr_file_header(2);
+    const auto first_block = Gbr::Format::make_gbr_block_header(160, 8, control);
+    const auto second_block = Gbr::Format::make_gbr_block_header(160, 8, second_control);
+    std::vector<uint8> multi{file_header.begin(), file_header.end()};
     multi.insert(multi.end(), first_block.begin(), first_block.end());
     multi.insert(multi.end(), 320, 0xA5);
     multi.insert(multi.end(), second_block.begin(), second_block.end());

@@ -5,21 +5,22 @@
 
 #include <cstdio>
 
+#include "types.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "pico/stdlib.h"
 
 #include "pin_config.h"
 
-namespace gbp::terminal {
+namespace Gbp::Terminal {
 namespace {
 
 Link* active_link = nullptr;
-constexpr std::uint32_t PACKET_TIMEOUT_US = 400'000;
+constexpr uint32 PACKET_TIMEOUT_US = 400'000;
 
 }  // namespace
 
-void Link::initialize(const std::uint32_t simulated_print_time_us) {
+void Link::initialize(const uint32 simulated_print_time_us) {
     session_.reset();
     session_.set_simulated_print_time(simulated_print_time_us);
     read_index_.store(0);
@@ -29,32 +30,32 @@ void Link::initialize(const std::uint32_t simulated_print_time_us) {
     synced_ = false;
     preamble_ = 0;
     bit_count_ = 0;
-    gpio_put(board::LINK_DATA_OUT, false);
+    gpio_put(Board::LINK_DATA_OUT, false);
     active_link = this;
-    gpio_set_irq_enabled_with_callback(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true, &Link::gpio_irq);
+    gpio_set_irq_enabled_with_callback(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true, &Link::gpio_irq);
     irq_set_priority(IO_IRQ_BANK0, 0x40);
 }
 
 void Link::stop() {
-    gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
+    gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
     active_link = nullptr;
     reset_wire();
     read_index_.store(0, std::memory_order_relaxed);
     write_index_.store(0, std::memory_order_relaxed);
-    gpio_set_dir(board::LINK_CLOCK, GPIO_IN);
-    gpio_put(board::LINK_DATA_OUT, true);
+    gpio_set_dir(Board::LINK_CLOCK, GPIO_IN);
+    gpio_put(Board::LINK_DATA_OUT, true);
 }
 
-void Link::gpio_irq(const unsigned int gpio, const std::uint32_t events) {
-    if (active_link != nullptr && gpio == board::LINK_CLOCK && (events & GPIO_IRQ_EDGE_RISE) != 0) {
+void Link::gpio_irq(const unsigned int gpio, const uint32 events) {
+    if (active_link != nullptr && gpio == Board::LINK_CLOCK && (events & GPIO_IRQ_EDGE_RISE) != 0) {
         active_link->on_rising_clock();
     }
 }
 
 void Link::on_rising_clock() {
-    const std::uint8_t input_bit = gpio_get(board::LINK_DATA_IN) ? 1 : 0;
+    const uint8 input_bit = gpio_get(Board::LINK_DATA_IN) ? 1 : 0;
     if (!synced_) {
-        preamble_ = static_cast<std::uint16_t>((preamble_ << 1) | input_bit);
+        preamble_ = static_cast<uint16>((preamble_ << 1) | input_bit);
         if (preamble_ == 0x8833) {
             synced_ = true;
             input_byte_ = 0;
@@ -68,11 +69,11 @@ void Link::on_rising_clock() {
             }
             last_byte_us_ = time_us_32();
         }
-        gpio_put(board::LINK_DATA_OUT, false);
+        gpio_put(Board::LINK_DATA_OUT, false);
         return;
     }
 
-    input_byte_ = static_cast<std::uint8_t>((input_byte_ << 1) | input_bit);
+    input_byte_ = static_cast<uint8>((input_byte_ << 1) | input_bit);
     if (++bit_count_ == 8) {
         const auto now_us = time_us_32();
         const ByteReply reply = session_.feed(input_byte_, buffer_full_.load(std::memory_order_relaxed), now_us);
@@ -91,11 +92,11 @@ void Link::on_rising_clock() {
     }
     // The reference's rising-edge-only ISR prepares the following output bit
     // immediately after sampling this one, including at byte boundaries.
-    gpio_put(board::LINK_DATA_OUT, (output_byte_ & (0x80u >> bit_count_)) != 0);
+    gpio_put(Board::LINK_DATA_OUT, (output_byte_ & (0x80u >> bit_count_)) != 0);
 }
 
-bool Link::enqueue(const std::uint8_t byte) {
-    const std::uint32_t write = write_index_.load(std::memory_order_relaxed);
+bool Link::enqueue(const uint8 byte) {
+    const uint32 write = write_index_.load(std::memory_order_relaxed);
     if (write - read_index_.load(std::memory_order_acquire) == QUEUE_SIZE) {
         return false;
     }
@@ -104,8 +105,8 @@ bool Link::enqueue(const std::uint8_t byte) {
     return true;
 }
 
-bool Link::dequeue(std::uint8_t& byte) {
-    const std::uint32_t read = read_index_.load(std::memory_order_relaxed);
+bool Link::dequeue(uint8& byte) {
+    const uint32 read = read_index_.load(std::memory_order_relaxed);
     if (read == write_index_.load(std::memory_order_acquire)) {
         return false;
     }
@@ -121,21 +122,21 @@ void Link::reset_wire() {
     bit_count_ = 0;
     input_byte_ = 0;
     output_byte_ = 0;
-    gpio_put(board::LINK_DATA_OUT, false);
+    gpio_put(Board::LINK_DATA_OUT, false);
 }
 
 bool Link::poll(Receiver& receiver) {
     bool changed = false;
     if (overflow_.exchange(false, std::memory_order_relaxed)) {
         printf("Game Boy link receive queue overflow\n");
-        gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
+        gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
         read_index_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
         receiver.abort_packet();
         reset_wire();
-        gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
+        gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
     }
 
-    std::uint8_t byte = 0;
+    uint8 byte = 0;
     while (dequeue(byte)) {
         if (receiver.feed(byte)) {
             changed = true;
@@ -144,13 +145,13 @@ bool Link::poll(Receiver& receiver) {
     }
     set_buffer_full(receiver.buffer_full());
 
-    if (synced_ && static_cast<std::uint32_t>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
-        gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
-        if (synced_ && static_cast<std::uint32_t>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
+    if (synced_ && static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
+        gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, false);
+        if (synced_ && static_cast<uint32>(time_us_32() - last_byte_us_) > PACKET_TIMEOUT_US) {
             receiver.abort_packet();
             reset_wire();
         }
-        gpio_set_irq_enabled(board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
+        gpio_set_irq_enabled(Board::LINK_CLOCK, GPIO_IRQ_EDGE_RISE, true);
     }
     return changed;
 }
@@ -159,8 +160,8 @@ void Link::set_buffer_full(const bool full) {
     buffer_full_.store(full, std::memory_order_relaxed);
 }
 
-bool Link::take_print_completion(std::uint32_t& at_us) {
+bool Link::take_print_completion(uint32& at_us) {
     return session_.take_print_completion(time_us_32(), at_us);
 }
 
-}  // namespace gbp::terminal
+}  // namespace Gbp::Terminal

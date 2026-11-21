@@ -3,18 +3,18 @@
 
 #pragma once
 
-#include <cstdint>
+#include "types.h"
 
-namespace gbp::protocol {
+namespace Gbp::Protocol {
 
-inline constexpr std::uint8_t DEVICE_ID = 0x81;
-inline constexpr std::uint8_t STATUS_UNPROCESSED = 0x08;
-inline constexpr std::uint8_t STATUS_FULL = 0x04;
-inline constexpr std::uint8_t STATUS_BUSY = 0x02;
-inline constexpr std::uint8_t STATUS_CHECKSUM_ERROR = 0x01;
-inline constexpr std::uint8_t STATUS_ERROR_MASK = 0xF1;
+inline constexpr uint8 DEVICE_ID = 0x81;
+inline constexpr uint8 STATUS_UNPROCESSED = 0x08;
+inline constexpr uint8 STATUS_FULL = 0x04;
+inline constexpr uint8 STATUS_BUSY = 0x02;
+inline constexpr uint8 STATUS_CHECKSUM_ERROR = 0x01;
+inline constexpr uint8 STATUS_ERROR_MASK = 0xF1;
 
-enum class Command : std::uint8_t {
+enum class Command : uint8 {
     Init = 0x01,
     Print = 0x02,
     Data = 0x04,
@@ -23,12 +23,12 @@ enum class Command : std::uint8_t {
 };
 
 struct Header {
-    std::uint8_t command = 0;
-    std::uint8_t compression = 0;
-    std::uint16_t length = 0;
+    uint8 command = 0;
+    uint8 compression = 0;
+    uint16 length = 0;
 };
 
-enum class Event : std::uint8_t {
+enum class Event : uint8 {
     None,
     Sync,
     PacketStart,
@@ -41,7 +41,7 @@ enum class Event : std::uint8_t {
 struct ParseResult {
     Event event = Event::None;
     Header header{};
-    std::uint8_t payload = 0;
+    uint8 payload = 0;
     bool checksum_valid = false;
 };
 
@@ -49,11 +49,11 @@ struct ParseResult {
 // Payload bytes are reported as they arrive so callers need not buffer a packet.
 class PacketParser {
   public:
-    ParseResult feed(std::uint8_t byte);
+    ParseResult feed(uint8 byte);
     void reset();
 
   private:
-    enum class State : std::uint8_t {
+    enum class State : uint8 {
         Sync0,
         Sync1,
         Command,
@@ -69,9 +69,9 @@ class PacketParser {
 
     State state_ = State::Sync0;
     Header header_{};
-    std::uint16_t payload_read_ = 0;
-    std::uint16_t checksum_ = 0;
-    std::uint16_t received_checksum_ = 0;
+    uint16 payload_read_ = 0;
+    uint16 checksum_ = 0;
+    uint16 received_checksum_ = 0;
 };
 
-}  // namespace gbp::protocol
+}  // namespace Gbp::Protocol

@@ -2,10 +2,11 @@
 // Copyright (C) 2026 Ken(github.com/krovma)
 
 #include "gbp/protocol/packet.h"
+#include "types.h"
 
-namespace gbp::protocol {
+namespace Gbp::Protocol {
 
-ParseResult PacketParser::feed(const std::uint8_t byte) {
+ParseResult PacketParser::feed(const uint8 byte) {
     ParseResult result{};
     switch (state_) {
         case State::Sync0:
@@ -38,7 +39,7 @@ ParseResult PacketParser::feed(const std::uint8_t byte) {
             state_ = State::LengthHi;
             break;
         case State::LengthHi:
-            header_.length |= static_cast<std::uint16_t>(byte) << 8;
+            header_.length |= static_cast<uint16>(byte) << 8;
             checksum_ += byte;
             payload_read_ = 0;
             state_ = header_.length == 0 ? State::ChecksumLo : State::Payload;
@@ -57,11 +58,12 @@ ParseResult PacketParser::feed(const std::uint8_t byte) {
             state_ = State::ChecksumHi;
             break;
         case State::ChecksumHi:
-            received_checksum_ |= static_cast<std::uint16_t>(byte) << 8;
+            received_checksum_ |= static_cast<uint16>(byte) << 8;
             result.event = Event::PacketComplete;
             result.checksum_valid = received_checksum_ == checksum_;
             state_ = State::DummyId;
             break;
+        // The host clocks two more bytes to read the printer's ID and status.
         case State::DummyId:
             result.event = Event::DummyId;
             state_ = State::DummyStatus;
@@ -83,4 +85,4 @@ void PacketParser::reset() {
     received_checksum_ = 0;
 }
 
-}  // namespace gbp::protocol
+}  // namespace Gbp::Protocol

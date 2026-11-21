@@ -5,9 +5,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
-#include <cstdint>
 
+#include "types.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
@@ -17,11 +16,11 @@
 
 #include "pin_config.h"
 
-namespace display {
+namespace Display {
 namespace {
 
 // ST7789VW command codes, named as in the controller data sheet.
-enum Command : uint8_t {
+enum Command : uint8 {
     SLEEP_OUT                  = 0x11,
     INVERSION_ON               = 0x21,
     DISPLAY_ON                 = 0x29,
@@ -42,52 +41,52 @@ enum Command : uint8_t {
     NEGATIVE_GAMMA_CONTROL     = 0xE1,
 };
 
-constexpr uint16_t BACKLIGHT_PWM_WRAP          = 999;
-constexpr float    BACKLIGHT_PWM_CLOCK_DIVIDER = 125.0f;
-constexpr size_t   PIXEL_COUNT                 = static_cast<size_t>(WIDTH) * HEIGHT;
-constexpr size_t   PACKED_PIXELS_PER_ROW       = WIDTH / 2;
-constexpr size_t   TRANSFER_ROW_SIZE           = static_cast<size_t>(WIDTH) * 3 / 2;
-constexpr uint     FRAME_DMA_IRQ_INDEX          = 1;
+constexpr uint16 BACKLIGHT_PWM_WRAP = 999;
+constexpr float BACKLIGHT_PWM_CLOCK_DIVIDER = 125.0f;
+constexpr usize PIXEL_COUNT = static_cast<usize>(WIDTH) * HEIGHT;
+constexpr usize PACKED_PIXELS_PER_ROW = WIDTH / 2;
+constexpr usize TRANSFER_ROW_SIZE = static_cast<usize>(WIDTH) * 3 / 2;
+constexpr uint FRAME_DMA_IRQ_INDEX = 1;
 static_assert(WIDTH % 2 == 0, "Packed 4bpp grayscale requires an even display width");
 
-uint                                      frame_tx_dma_channel;
-uint                                      frame_rx_dma_channel;
-std::array<uint8_t, FRAME_BUFFER_SIZE>    frame_buffer{};
-std::array<uint8_t, TRANSFER_ROW_SIZE>    transfer_row{};
-uint8_t                                   frame_rx_sink;
-volatile uint16_t                         next_transfer_row;
-volatile bool                             frame_transfer_active;
-volatile bool                             backlight_pending = true;
-volatile uint8_t                          current_backlight_key = DEFAULT_BACKLIGHT_KEY;
-volatile uint16_t                         requested_backlight_level =
+uint frame_tx_dma_channel;
+uint frame_rx_dma_channel;
+std::array<uint8, FRAME_BUFFER_SIZE> frame_buffer{};
+std::array<uint8, TRANSFER_ROW_SIZE> transfer_row{};
+uint8 frame_rx_sink;
+volatile uint16 next_transfer_row;
+volatile bool frame_transfer_active;
+volatile bool backlight_pending = true;
+volatile uint8 current_backlight_key = DEFAULT_BACKLIGHT_KEY;
+volatile uint16 requested_backlight_level =
     (BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[DEFAULT_BACKLIGHT_KEY] / 100;
-uint8_t                                   current_palette_key = WHITE_PALETTE_KEY;
-volatile uint8_t                          transfer_palette_key = WHITE_PALETTE_KEY;
+uint8 current_palette_key = WHITE_PALETTE_KEY;
+volatile uint8 transfer_palette_key = WHITE_PALETTE_KEY;
 
 inline void select() {
-    gpio_put(board::TFT_CS_N, false);
+    gpio_put(Board::TFT_CS_N, false);
 }
 
 inline void deselect() {
-    gpio_put(board::TFT_CS_N, true);
+    gpio_put(Board::TFT_CS_N, true);
 }
 
-void write_command(const uint8_t command) {
-    gpio_put(board::TFT_DC, false);
+void write_command(const uint8 command) {
+    gpio_put(Board::TFT_DC, false);
     select();
-    spi_write_blocking(board::TFT_SPI, &command, 1);
+    spi_write_blocking(Board::TFT_SPI, &command, 1);
     deselect();
 }
 
-void write_data(const uint8_t* data, const size_t length) {
-    gpio_put(board::TFT_DC, true);
+void write_data(const uint8* data, const usize length) {
+    gpio_put(Board::TFT_DC, true);
     select();
-    spi_write_blocking(board::TFT_SPI, data, length);
+    spi_write_blocking(Board::TFT_SPI, data, length);
     deselect();
 }
 
-template <size_t Size>
-void write_register(const uint8_t command, const std::array<uint8_t, Size>& data) {
+template <usize Size>
+void write_register(const uint8 command, const std::array<uint8, Size>& data) {
     write_command(command);
     write_data(data.data(), data.size());
 }
@@ -96,9 +95,9 @@ void reset_panel() {
     // ZJY's vendor sequence specifies 100 ms low and 100 ms high. The ST7789
     // data sheet only requires a much shorter valid reset pulse and at least
     // 5 ms after release, so the module-specific delays are conservative.
-    gpio_put(board::TFT_RESET_N, false);
+    gpio_put(Board::TFT_RESET_N, false);
     sleep_ms(100);
-    gpio_put(board::TFT_RESET_N, true);
+    gpio_put(Board::TFT_RESET_N, true);
     sleep_ms(100);
 }
 
@@ -108,50 +107,50 @@ void initialize_controller() {
 
     // MADCTL: normal top-to-bottom, left-to-right memory order; RGB color
     // order. This is the portrait orientation used by the vendor sequence.
-    write_register(MEMORY_DATA_ACCESS_CONTROL, std::array<uint8_t, 1>{0x00});
+    write_register(MEMORY_DATA_ACCESS_CONTROL, std::array<uint8, 1>{0x00});
 
     // COLMOD: 0x03 selects 12-bit RGB444 data on the MCU interface. In the
     // four-wire serial format, two pixels are packed into three bytes as
     // [R1 G1] [B1 R2] [G2 B2].
-    write_register(INTERFACE_PIXEL_FORMAT, std::array<uint8_t, 1>{0x03});
+    write_register(INTERFACE_PIXEL_FORMAT, std::array<uint8, 1>{0x03});
 
     // PORCTRL: front/back porch timing for normal and idle modes. Values below
     // are the ZJY module vendor's sequence, not controller reset defaults.
-    write_register(PORCH_SETTING, std::array<uint8_t, 5>{0x0C, 0x0C, 0x00, 0x33, 0x33});
+    write_register(PORCH_SETTING, std::array<uint8, 5>{0x0C, 0x0C, 0x00, 0x33, 0x33});
 
     // GCTRL: positive and negative gate-driver voltage selection.
-    write_register(GATE_CONTROL, std::array<uint8_t, 1>{0x35});
+    write_register(GATE_CONTROL, std::array<uint8, 1>{0x35});
 
     // VCOMS: common-electrode voltage. ZJY specifies 0x32 (about 1.35 V).
-    write_register(VCOM_SETTING, std::array<uint8_t, 1>{0x32});
+    write_register(VCOM_SETTING, std::array<uint8, 1>{0x32});
 
     // Allow VRH and VDV to be sourced from the following command writes
     // instead of the controller's nonvolatile defaults.
-    write_register(VDV_VRH_COMMAND_ENABLE, std::array<uint8_t, 1>{0x01});
+    write_register(VDV_VRH_COMMAND_ENABLE, std::array<uint8, 1>{0x01});
 
     // VRHS: GVDD/source-driver voltage level selected by the module vendor.
-    write_register(VRH_SET, std::array<uint8_t, 1>{0x15});
+    write_register(VRH_SET, std::array<uint8, 1>{0x15});
 
     // VDVS: 0x20 corresponds to a 0 V VDV offset in the ST7789 table.
-    write_register(VDV_SET, std::array<uint8_t, 1>{0x20});
+    write_register(VDV_SET, std::array<uint8, 1>{0x20});
 
     // FRCTRL2: 0x0F selects the vendor's normal-mode frame rate setting,
     // documented in the module sequence as 60 Hz.
-    write_register(FRAME_RATE_CONTROL_2, std::array<uint8_t, 1>{0x0F});
+    write_register(FRAME_RATE_CONTROL_2, std::array<uint8, 1>{0x0F});
 
     // PWCTRL1: AVDD, AVCL and VDDS power-rail settings for this panel.
-    write_register(POWER_CONTROL_1, std::array<uint8_t, 2>{0xA4, 0xA1});
+    write_register(POWER_CONTROL_1, std::array<uint8, 2>{0xA4, 0xA1});
 
     // Module-specific positive gamma curve. Each byte controls one or more
     // points on the ST7789 positive-polarity gamma characteristic.
     write_register(POSITIVE_GAMMA_CONTROL,
-                   std::array<uint8_t, 14>{0xD0, 0x08, 0x0E, 0x09, 0x09, 0x05, 0x31,
+                   std::array<uint8, 14>{0xD0, 0x08, 0x0E, 0x09, 0x09, 0x05, 0x31,
                                            0x33, 0x48, 0x17, 0x14, 0x15, 0x31, 0x34});
 
     // Module-specific negative gamma curve. ZJY supplies the same endpoint
     // values as the positive curve, with the third control point at 0x0E.
     write_register(NEGATIVE_GAMMA_CONTROL,
-                   std::array<uint8_t, 14>{0xD0, 0x08, 0x0E, 0x09, 0x09, 0x15, 0x31,
+                   std::array<uint8, 14>{0xD0, 0x08, 0x0E, 0x09, 0x09, 0x15, 0x31,
                                            0x33, 0x48, 0x17, 0x14, 0x15, 0x31, 0x34});
 
     // This panel is specified for inversion-on operation.
@@ -162,15 +161,15 @@ void initialize_controller() {
     sleep_ms(20);
 }
 
-void set_address_window(const uint16_t x0, const uint16_t y0, const uint16_t x1, const uint16_t y1) {
-    const std::array<uint8_t, 4> columns{
-        static_cast<uint8_t>(x0 >> 8), static_cast<uint8_t>(x0),
-        static_cast<uint8_t>(x1 >> 8), static_cast<uint8_t>(x1)};
+void set_address_window(const uint16 x0, const uint16 y0, const uint16 x1, const uint16 y1) {
+    const std::array<uint8, 4> columns{
+        static_cast<uint8>(x0 >> 8), static_cast<uint8>(x0),
+        static_cast<uint8>(x1 >> 8), static_cast<uint8>(x1)};
     write_register(COLUMN_ADDRESS_SET, columns);
 
-    const std::array<uint8_t, 4> rows{
-        static_cast<uint8_t>(y0 >> 8), static_cast<uint8_t>(y0),
-        static_cast<uint8_t>(y1 >> 8), static_cast<uint8_t>(y1)};
+    const std::array<uint8, 4> rows{
+        static_cast<uint8>(y0 >> 8), static_cast<uint8>(y0),
+        static_cast<uint8>(y1 >> 8), static_cast<uint8>(y1)};
     write_register(ROW_ADDRESS_SET, rows);
 
     // RAMWR makes all subsequent data bytes pixel data until another command.
@@ -180,33 +179,34 @@ void set_address_window(const uint16_t x0, const uint16_t y0, const uint16_t x1,
 void initialize_backlight_pwm() {
     // BLK is active-high. A 125 MHz default system clock divided by 125 and a
     // wrap value of 999 produces a 1 kHz PWM carrier.
-    gpio_set_function(board::TFT_BACKLIGHT, GPIO_FUNC_PWM);
-    const uint slice = pwm_gpio_to_slice_num(board::TFT_BACKLIGHT);
+    gpio_set_function(Board::TFT_BACKLIGHT, GPIO_FUNC_PWM);
+    const uint slice = pwm_gpio_to_slice_num(Board::TFT_BACKLIGHT);
     pwm_config config = pwm_get_default_config();
     pwm_config_set_clkdiv(&config, BACKLIGHT_PWM_CLOCK_DIVIDER);
     pwm_config_set_wrap(&config, BACKLIGHT_PWM_WRAP);
     pwm_init(slice, &config, true);
-    pwm_set_gpio_level(board::TFT_BACKLIGHT, 0);
+    pwm_set_gpio_level(Board::TFT_BACKLIGHT, 0);
 }
 
 void apply_backlight_level() {
-    pwm_set_gpio_level(board::TFT_BACKLIGHT, requested_backlight_level);
+    pwm_set_gpio_level(Board::TFT_BACKLIGHT, requested_backlight_level);
     backlight_pending = false;
 }
 
-void prepare_transfer_row(const uint16_t row) {
-    const size_t source_offset = static_cast<size_t>(row) * PACKED_PIXELS_PER_ROW;
-    const uint16_t base       = BASE_PALETTE_RGB444[transfer_palette_key];
+void prepare_transfer_row(const uint16 row) {
+    const usize source_offset = static_cast<usize>(row) * PACKED_PIXELS_PER_ROW;
+    const uint16 base       = BASE_PALETTE_RGB444[transfer_palette_key];
 
     // Each source byte stores two grayscale pixels, G1:G2. Tint both pixels
     // through the selected base color before packing RGB444 serial bytes.
-    for (size_t source_index = 0, target_index = 0; source_index < PACKED_PIXELS_PER_ROW; ++source_index, target_index += 3) {
-        detail::pack_gray_pair(frame_buffer[source_offset + source_index], base, transfer_row.data() + target_index);
+    for (usize source_index = 0, target_index = 0; source_index < PACKED_PIXELS_PER_ROW;
+         ++source_index, target_index += 3) {
+        Detail::pack_gray_pair(frame_buffer[source_offset + source_index], base, transfer_row.data() + target_index);
     }
 }
 
 void start_transfer_row_dma() {
-    const uint32_t transfer_count = dma_encode_transfer_count(TRANSFER_ROW_SIZE);
+    const uint32 transfer_count = dma_encode_transfer_count(TRANSFER_ROW_SIZE);
 
     // Arm RX first so it drains the full-duplex SPI receive FIFO before TX
     // starts producing clock edges for the expanded RGB444 row.
@@ -240,8 +240,8 @@ void initialize_frame_dma() {
     channel_config_set_transfer_data_size(&tx_config, DMA_SIZE_8);
     channel_config_set_read_increment(&tx_config, true);
     channel_config_set_write_increment(&tx_config, false);
-    channel_config_set_dreq(&tx_config, spi_get_dreq(board::TFT_SPI, true));
-    dma_channel_configure(frame_tx_dma_channel, &tx_config, &spi_get_hw(board::TFT_SPI)->dr, transfer_row.data(), 0, false);
+    channel_config_set_dreq(&tx_config, spi_get_dreq(Board::TFT_SPI, true));
+    dma_channel_configure(frame_tx_dma_channel, &tx_config, &spi_get_hw(Board::TFT_SPI)->dr, transfer_row.data(), 0, false);
 
     // SPI receives one byte while transmitting each byte. Drain those bytes
     // with a second DMA channel so the RX FIFO cannot overrun during a frame.
@@ -250,8 +250,8 @@ void initialize_frame_dma() {
     channel_config_set_transfer_data_size(&rx_config, DMA_SIZE_8);
     channel_config_set_read_increment(&rx_config, false);
     channel_config_set_write_increment(&rx_config, false);
-    channel_config_set_dreq(&rx_config, spi_get_dreq(board::TFT_SPI, false));
-    dma_channel_configure(frame_rx_dma_channel, &rx_config, &frame_rx_sink, &spi_get_hw(board::TFT_SPI)->dr, 0, false);
+    channel_config_set_dreq(&rx_config, spi_get_dreq(Board::TFT_SPI, false));
+    dma_channel_configure(frame_rx_dma_channel, &rx_config, &frame_rx_sink, &spi_get_hw(Board::TFT_SPI)->dr, 0, false);
 
     dma_irqn_acknowledge_channel(FRAME_DMA_IRQ_INDEX, frame_rx_dma_channel);
     dma_irqn_set_channel_enabled(FRAME_DMA_IRQ_INDEX, frame_rx_dma_channel, true);
@@ -265,22 +265,22 @@ void init() {
     // The ZJY timing table leaves numeric limits as TBD. Start conservatively
     // at 20 MHz. The reviewed STM32 hardware-SPI example uses mode 3 and MSB
     // first; ST7789 samples SDA on the rising edge, which mode 3 provides.
-    spi_init(board::TFT_SPI, board::TFT_SPI_BAUD);
-    spi_set_format(board::TFT_SPI, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
-    gpio_set_function(board::TFT_SCK, GPIO_FUNC_SPI);
-    gpio_set_function(board::TFT_MOSI, GPIO_FUNC_SPI);
+    spi_init(Board::TFT_SPI, Board::TFT_SPI_BAUD);
+    spi_set_format(Board::TFT_SPI, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
+    gpio_set_function(Board::TFT_SCK, GPIO_FUNC_SPI);
+    gpio_set_function(Board::TFT_MOSI, GPIO_FUNC_SPI);
 
-    gpio_init(board::TFT_CS_N);
-    gpio_put(board::TFT_CS_N, true);
-    gpio_set_dir(board::TFT_CS_N, GPIO_OUT);
+    gpio_init(Board::TFT_CS_N);
+    gpio_put(Board::TFT_CS_N, true);
+    gpio_set_dir(Board::TFT_CS_N, GPIO_OUT);
 
-    gpio_init(board::TFT_DC);
-    gpio_put(board::TFT_DC, false);
-    gpio_set_dir(board::TFT_DC, GPIO_OUT);
+    gpio_init(Board::TFT_DC);
+    gpio_put(Board::TFT_DC, false);
+    gpio_set_dir(Board::TFT_DC, GPIO_OUT);
 
-    gpio_init(board::TFT_RESET_N);
-    gpio_put(board::TFT_RESET_N, true);
-    gpio_set_dir(board::TFT_RESET_N, GPIO_OUT);
+    gpio_init(Board::TFT_RESET_N);
+    gpio_put(Board::TFT_RESET_N, true);
+    gpio_set_dir(Board::TFT_RESET_N, GPIO_OUT);
 
     initialize_frame_dma();
     initialize_backlight_pwm();
@@ -292,30 +292,30 @@ void init() {
 
 void set_backlight(const float percent) {
     const float clamped = std::clamp(percent, 0.0f, 100.0f);
-    requested_backlight_level = static_cast<uint16_t>((clamped * static_cast<float>(BACKLIGHT_PWM_WRAP + 1)) / 100.0f);
+    requested_backlight_level = static_cast<uint16>((clamped * static_cast<float>(BACKLIGHT_PWM_WRAP + 1)) / 100.0f);
     if (!backlight_pending) {
         apply_backlight_level();
     }
 }
 
-bool set_backlight_key(const uint8_t key) {
+bool set_backlight_key(const uint8 key) {
     if (key >= BACKLIGHT_DUTY_PERCENT.size()) {
         return false;
     }
 
     current_backlight_key = key;
-    requested_backlight_level = static_cast<uint16_t>((BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[key] / 100);
+    requested_backlight_level = static_cast<uint16>((BACKLIGHT_PWM_WRAP + 1) * BACKLIGHT_DUTY_PERCENT[key] / 100);
     if (!backlight_pending) {
         apply_backlight_level();
     }
     return true;
 }
 
-uint8_t backlight_key() {
+uint8 backlight_key() {
     return current_backlight_key;
 }
 
-bool set_palette_key(const uint8_t key) {
+bool set_palette_key(const uint8 key) {
     if (key >= PALETTE_COUNT) {
         return false;
     }
@@ -324,52 +324,52 @@ bool set_palette_key(const uint8_t key) {
     return true;
 }
 
-uint8_t palette_key() {
+uint8 palette_key() {
     return current_palette_key;
 }
 
 void clear(const Gray4 gray) {
-    const uint8_t packed_gray = static_cast<uint8_t>((gray & 0x0F) * 0x11);
+    const uint8 packed_gray = static_cast<uint8>((gray & 0x0F) * 0x11);
     frame_buffer.fill(packed_gray);
 }
 
-void set_pixel(const uint16_t x, const uint16_t y, const Gray4 gray) {
+void set_pixel(const uint16 x, const uint16 y, const Gray4 gray) {
     if (x >= WIDTH || y >= HEIGHT) {
         return;
     }
 
-    const uint8_t packed_gray = gray & 0x0F;
-    const size_t  pixel_index = static_cast<size_t>(y) * WIDTH + x;
-    const size_t  byte_offset = pixel_index / 2;
+    const uint8 packed_gray = gray & 0x0F;
+    const usize  pixel_index = static_cast<usize>(y) * WIDTH + x;
+    const usize  byte_offset = pixel_index / 2;
 
     if ((pixel_index & 1u) == 0) {
-        frame_buffer[byte_offset] = static_cast<uint8_t>((frame_buffer[byte_offset] & 0x0F) | (packed_gray << 4));
+        frame_buffer[byte_offset] = static_cast<uint8>((frame_buffer[byte_offset] & 0x0F) | (packed_gray << 4));
     } else {
-        frame_buffer[byte_offset] = static_cast<uint8_t>((frame_buffer[byte_offset] & 0xF0) | packed_gray);
+        frame_buffer[byte_offset] = static_cast<uint8>((frame_buffer[byte_offset] & 0xF0) | packed_gray);
     }
 }
 
-void fill_circle(const int16_t center_x, const int16_t center_y, const int16_t radius, const Gray4 gray) {
+void fill_circle(const int16 center_x, const int16 center_y, const int16 radius, const Gray4 gray) {
     if (radius <= 0) {
         return;
     }
 
-    const int32_t radius_squared = static_cast<int32_t>(radius) * static_cast<int32_t>(radius);
-    for (int32_t y_offset = -radius; y_offset <= radius; ++y_offset) {
-        const int32_t y = static_cast<int32_t>(center_y) + y_offset;
+    const int32 radius_squared = static_cast<int32>(radius) * static_cast<int32>(radius);
+    for (int32 y_offset = -radius; y_offset <= radius; ++y_offset) {
+        const int32 y = static_cast<int32>(center_y) + y_offset;
         if (y < 0 || y >= HEIGHT) {
             continue;
         }
 
-        int32_t x_extent = radius;
+        int32 x_extent = radius;
         while (x_extent * x_extent + y_offset * y_offset > radius_squared) {
             --x_extent;
         }
 
-        const int32_t first_x = std::max<int32_t>(0, static_cast<int32_t>(center_x) - x_extent);
-        const int32_t last_x  = std::min<int32_t>(WIDTH - 1, static_cast<int32_t>(center_x) + x_extent);
-        for (int32_t x = first_x; x <= last_x; ++x) {
-            set_pixel(static_cast<uint16_t>(x), static_cast<uint16_t>(y), gray);
+        const int32 first_x = std::max<int32>(0, static_cast<int32>(center_x) - x_extent);
+        const int32 last_x  = std::min<int32>(WIDTH - 1, static_cast<int32>(center_x) + x_extent);
+        for (int32 x = first_x; x <= last_x; ++x) {
+            set_pixel(static_cast<uint16>(x), static_cast<uint16>(y), gray);
         }
     }
 }
@@ -383,7 +383,7 @@ bool present() {
     frame_transfer_active = true;
     set_address_window(0, 0, WIDTH - 1, HEIGHT - 1);
 
-    gpio_put(board::TFT_DC, true);
+    gpio_put(Board::TFT_DC, true);
     select();
 
     prepare_transfer_row(0);
@@ -396,4 +396,4 @@ bool is_presenting() {
     return frame_transfer_active;
 }
 
-}  // namespace display
+}  // namespace Display

@@ -122,16 +122,15 @@ def generate(font_path: Path, text_header: Path, output: Path, threshold: int) -
         "",
         "#pragma once",
         "",
-        "#include <cstddef>",
-        "#include <cstdint>",
+        '#include "types.h"',
         "",
-        "namespace firmware_font {",
+        "namespace FirmwareFont {",
         "",
         "struct Glyph {",
-        "    std::uint32_t codepoint;",
-        "    std::uint8_t width;",
-        "    std::uint8_t row_stride;",
-        "    const std::uint8_t* rows;",
+        "    uint32 codepoint;",
+        "    uint8 width;",
+        "    uint8 row_stride;",
+        "    const uint8* rows;",
         "};",
         "",
     ]
@@ -143,7 +142,7 @@ def generate(font_path: Path, text_header: Path, output: Path, threshold: int) -
         glyph_names.append((codepoint, name, width))
         lines.extend(
             [
-                f"inline constexpr std::uint8_t {name}_ROWS[] = {{",
+                f"inline constexpr uint8 {name}_ROWS[] = {{",
                 cpp_array(data),
                 "};",
                 "",
@@ -157,9 +156,9 @@ def generate(font_path: Path, text_header: Path, output: Path, threshold: int) -
         [
             "};",
             "",
-            "inline constexpr std::size_t GLYPH_COUNT = sizeof(GLYPHS) / sizeof(GLYPHS[0]);",
+            "inline constexpr usize GLYPH_COUNT = sizeof(GLYPHS) / sizeof(GLYPHS[0]);",
             "",
-            "inline const Glyph* find_glyph(const std::uint32_t codepoint) noexcept {",
+            "inline const Glyph* find_glyph(const uint32 codepoint) noexcept {",
             "    switch (codepoint) {",
         ]
     )
@@ -171,7 +170,7 @@ def generate(font_path: Path, text_header: Path, output: Path, threshold: int) -
             "    }",
             "}",
             "",
-            "}  // namespace firmware_font",
+            "}  // namespace FirmwareFont",
             "",
         ]
     )

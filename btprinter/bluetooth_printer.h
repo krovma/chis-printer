@@ -5,18 +5,17 @@
 
 #include <array>
 #include <atomic>
-#include <cstddef>
-#include <cstdint>
 
+#include "types.h"
 #include "config/firmware_config.h"
 #include "btprinter/escpos.h"
 
-namespace btprinter {
+namespace BtPrinter {
 
-enum class PrintStatus : std::uint8_t { Disabled, Idle, Printing, Success, Error };
-enum class ConnectionState : std::uint8_t { Disconnected, Connecting, Connected, Error };
+enum class PrintStatus : uint8 { Disabled, Idle, Printing, Success, Error };
+enum class ConnectionState : uint8 { Disconnected, Connecting, Connected, Error };
 
-enum class TraceKind : std::uint8_t {
+enum class TraceKind : uint8 {
     ConnectRequest, DisconnectRequest, ConnectionTimeout,
     JobStart, HciState, HciLink, PinRequest, SspConfirmation,
     SdpStart, SdpService, SdpComplete, InquiryStart, InquiryMatch,
@@ -25,10 +24,10 @@ enum class TraceKind : std::uint8_t {
 };
 
 struct TraceEvent {
-    std::uint32_t uptime_ms = 0;
+    uint32 uptime_ms = 0;
     TraceKind kind = TraceKind::HciState;
-    std::uint32_t value = 0;
-    std::uint32_t extra = 0;
+    uint32 value = 0;
+    uint32 extra = 0;
 };
 
 const char* trace_kind_name(TraceKind kind);
@@ -38,13 +37,13 @@ const char* trace_kind_name(TraceKind kind);
 // the byte counters from its main loop.
 class BluetoothPrinter {
   public:
-    bool initialize(const config::M3Config& config);
+    bool initialize(const Config::M3Config& config);
     bool connect(bool forget_link_key);
     void disconnect();
     void service();
     // Consecutive GBR blocks share one ESC/POS image stream. Only the first
     // block initializes the printer, and only the last block feeds the paper.
-    bool start(const std::uint8_t* image, std::size_t size, std::uint8_t palette,
+    bool start(const uint8* image, usize size, uint8 palette,
                bool first_block, bool last_block);
 
     bool initialized() const { return initialized_.load(std::memory_order_acquire); }
@@ -53,23 +52,23 @@ class BluetoothPrinter {
     bool connected() const { return connected_.load(std::memory_order_acquire); }
     ConnectionState connection_state() const { return connection_state_.load(std::memory_order_acquire); }
     PrintStatus status() const { return status_.load(std::memory_order_acquire); }
-    std::size_t progress() const { return progress_.load(std::memory_order_acquire); }
-    std::size_t total() const { return total_.load(std::memory_order_acquire); }
+    usize progress() const { return progress_.load(std::memory_order_acquire); }
+    usize total() const { return total_.load(std::memory_order_acquire); }
     bool pop_trace(TraceEvent& event);
-    std::uint32_t trace_drops() const { return trace_drops_.load(std::memory_order_acquire); }
+    uint32 trace_drops() const { return trace_drops_.load(std::memory_order_acquire); }
 
   private:
-    static void packet_handler(std::uint8_t packet_type, std::uint16_t channel,
-                               std::uint8_t* packet, std::uint16_t size);
-    static void sdp_handler(std::uint8_t packet_type, std::uint16_t channel,
-                            std::uint8_t* packet, std::uint16_t size);
-    void handle_packet(std::uint8_t packet_type, std::uint16_t channel,
-                       std::uint8_t* packet, std::uint16_t size);
-    void handle_sdp(std::uint8_t packet_type, std::uint16_t channel,
-                    std::uint8_t* packet, std::uint16_t size);
+    static void packet_handler(uint8 packet_type, uint16 channel,
+                               uint8* packet, uint16 size);
+    static void sdp_handler(uint8 packet_type, uint16 channel,
+                            uint8* packet, uint16 size);
+    void handle_packet(uint8 packet_type, uint16 channel,
+                       uint8* packet, uint16 size);
+    void handle_sdp(uint8 packet_type, uint16 channel,
+                    uint8* packet, uint16 size);
     void begin_sdp_query();
     void begin_inquiry();
-    void select_discovered_address(const std::uint8_t* address);
+    void select_discovered_address(const uint8* address);
     void query_next_remote_name();
     void close_link();
     void send_next_band();
@@ -77,45 +76,45 @@ class BluetoothPrinter {
     void fail_connection();
     void fail_print();
     void fail_print_link();
-    void trace(TraceKind kind, std::uint32_t value = 0, std::uint32_t extra = 0);
+    void trace(TraceKind kind, uint32 value = 0, uint32 extra = 0);
 
     struct InquiryDevice {
-        std::array<std::uint8_t, 6> address{};
-        std::uint8_t page_scan_repetition_mode = 0;
-        std::uint16_t clock_offset = 0;
+        std::array<uint8, 6> address{};
+        uint8 page_scan_repetition_mode = 0;
+        uint16 clock_offset = 0;
     };
-    static constexpr std::size_t MAX_INQUIRY_DEVICES = 16;
-    static constexpr std::uint8_t TRACE_CAPACITY = 32;
+    static constexpr usize MAX_INQUIRY_DEVICES = 16;
+    static constexpr uint8 TRACE_CAPACITY = 32;
 
     static BluetoothPrinter* instance_;
-    std::array<std::uint8_t, 6> address_{};
+    std::array<uint8, 6> address_{};
     bool address_known_ = false;
     std::array<char, 32> printer_name_{};
     std::array<char, 8> pin_{};
-    std::uint8_t image_scale_ = DEFAULT_IMAGE_SCALE;
+    uint8 image_scale_ = DEFAULT_IMAGE_SCALE;
     std::atomic<PrintStatus> status_{PrintStatus::Disabled};
     std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
     std::atomic_bool connected_{false};
-    std::atomic<std::size_t> progress_{0};
-    std::atomic<std::size_t> total_{0};
+    std::atomic<usize> progress_{0};
+    std::atomic<usize> total_{0};
     std::atomic_bool initialized_{false};
     std::atomic_bool hci_ready_{false};
     std::atomic_bool connect_requested_{false};
     std::atomic_bool print_pending_{false};
     std::array<TraceEvent, TRACE_CAPACITY> trace_events_{};
-    std::atomic<std::uint8_t> trace_head_{0};
-    std::atomic<std::uint8_t> trace_tail_{0};
-    std::atomic<std::uint32_t> trace_drops_{0};
+    std::atomic<uint8> trace_head_{0};
+    std::atomic<uint8> trace_tail_{0};
+    std::atomic<uint32> trace_drops_{0};
 
-    std::uint16_t rfcomm_cid_ = 0;
-    std::uint16_t rfcomm_mtu_ = 0;
-    std::uint16_t hci_connection_handle_ = 0xffff;
-    std::uint8_t rfcomm_server_channel_ = 0;
+    uint16 rfcomm_cid_ = 0;
+    uint16 rfcomm_mtu_ = 0;
+    uint16 hci_connection_handle_ = 0xffff;
+    uint8 rfcomm_server_channel_ = 0;
     bool connect_queued_ = false;
     bool forget_link_key_queued_ = false;
     bool rfcomm_open_pending_ = false;
     bool disconnect_pending_ = false;
-    std::uint64_t connect_started_ms_ = 0;
+    uint64 connect_started_ms_ = 0;
     bool header_sent_ = false;
     bool footer_sent_ = false;
     bool printer_flow_paused_ = false;
@@ -125,13 +124,13 @@ class BluetoothPrinter {
     bool inquiry_pending_ = false;
     bool inquiry_match_found_ = false;
     bool name_query_pending_ = false;
-    std::size_t inquiry_count_ = 0;
-    std::size_t name_query_index_ = 0;
+    usize inquiry_count_ = 0;
+    usize name_query_index_ = 0;
     std::array<InquiryDevice, MAX_INQUIRY_DEVICES> inquiry_devices_{};
-    std::size_t tx_length_ = 0;
-    std::size_t tx_offset_ = 0;
+    usize tx_length_ = 0;
+    usize tx_offset_ = 0;
     EscPosRasterEncoder encoder_{};
-    std::array<std::uint8_t, MAX_BAND_BYTES> band_buffer_{};
+    std::array<uint8, MAX_BAND_BYTES> band_buffer_{};
 };
 
-}  // namespace btprinter
+}  // namespace BtPrinter

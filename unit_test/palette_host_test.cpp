@@ -4,13 +4,13 @@
 #include <array>
 #include <cassert>
 #include <cmath>
-#include <cstdint>
 
+#include "types.h"
 #include "display/palette.h"
 
 namespace {
 
-std::array<double, 3> hsv_rgb(const uint8_t key) {
+std::array<double, 3> hsv_rgb(const uint8 key) {
     const double sector = static_cast<double>(key);
     const double x      = 1.0 - std::abs(std::fmod(sector, 2.0) - 1.0);
     switch (key) {
@@ -23,8 +23,8 @@ std::array<double, 3> hsv_rgb(const uint8_t key) {
     }
 }
 
-uint16_t quantize_rgb444(const std::array<double, 3>& rgb, const uint8_t gray) {
-    return static_cast<uint16_t>(
+uint16 quantize_rgb444(const std::array<double, 3>& rgb, const uint8 gray) {
+    return static_cast<uint16>(
         (std::lround(gray * rgb[0]) << 8) |
         (std::lround(gray * rgb[1]) << 4) |
         std::lround(gray * rgb[2]));
@@ -33,33 +33,33 @@ uint16_t quantize_rgb444(const std::array<double, 3>& rgb, const uint8_t gray) {
 }  // namespace
 
 int main() {
-    static_assert(display::PALETTE_COUNT == 7);
-    static_assert(display::WHITE_PALETTE_KEY == 6);
-    assert((display::BASE_PALETTE_RGB444 ==
-            std::array<uint16_t, 7>{0xF00, 0xFF0, 0x0F0, 0x0FF, 0x00F, 0xF0F, 0xFFF}));
+    static_assert(Display::PALETTE_COUNT == 7);
+    static_assert(Display::WHITE_PALETTE_KEY == 6);
+    assert((Display::BASE_PALETTE_RGB444 ==
+            std::array<uint16, 7>{0xF00, 0xFF0, 0x0F0, 0x0FF, 0x00F, 0xF0F, 0xFFF}));
 
-    for (uint8_t key = 0; key < display::WHITE_PALETTE_KEY; ++key) {
+    for (uint8 key = 0; key < Display::WHITE_PALETTE_KEY; ++key) {
         const auto rgb = hsv_rgb(key);
-        assert(display::BASE_PALETTE_RGB444[key] == quantize_rgb444(rgb, 15));
-        for (uint8_t gray = 0; gray < 16; ++gray) {
-            assert(display::detail::tint_rgb444(gray, display::BASE_PALETTE_RGB444[key]) == quantize_rgb444(rgb, gray));
+        assert(Display::BASE_PALETTE_RGB444[key] == quantize_rgb444(rgb, 15));
+        for (uint8 gray = 0; gray < 16; ++gray) {
+            assert(Display::Detail::tint_rgb444(gray, Display::BASE_PALETTE_RGB444[key]) == quantize_rgb444(rgb, gray));
         }
     }
 
-    assert(display::BASE_PALETTE_RGB444[display::WHITE_PALETTE_KEY] == 0xFFF);
-    for (uint8_t gray = 0; gray < 16; ++gray) {
-        assert(display::detail::tint_rgb444(gray, display::BASE_PALETTE_RGB444[display::WHITE_PALETTE_KEY]) == gray * 0x111);
+    assert(Display::BASE_PALETTE_RGB444[Display::WHITE_PALETTE_KEY] == 0xFFF);
+    for (uint8 gray = 0; gray < 16; ++gray) {
+        assert(Display::Detail::tint_rgb444(gray, Display::BASE_PALETTE_RGB444[Display::WHITE_PALETTE_KEY]) == gray * 0x111);
     }
 
-    for (uint16_t packed = 0; packed <= 0xFF; ++packed) {
-        std::array<uint8_t, 3> output{};
-        display::detail::pack_gray_pair(static_cast<uint8_t>(packed), 0xFFF, output.data());
+    for (uint16 packed = 0; packed <= 0xFF; ++packed) {
+        std::array<uint8, 3> output{};
+        Display::Detail::pack_gray_pair(static_cast<uint8>(packed), 0xFFF, output.data());
         assert(output[0] == (packed >> 4) * 0x11);
         assert(output[1] == packed);
         assert(output[2] == (packed & 0x0F) * 0x11);
     }
 
-    std::array<uint8_t, 3> output{};
-    display::detail::pack_gray_pair(0xF8, display::BASE_PALETTE_RGB444[1], output.data());
-    assert((output == std::array<uint8_t, 3>{0xFF, 0x08, 0x80}));
+    std::array<uint8, 3> output{};
+    Display::Detail::pack_gray_pair(0xF8, Display::BASE_PALETTE_RGB444[1], output.data());
+    assert((output == std::array<uint8, 3>{0xFF, 0x08, 0x80}));
 }

@@ -6,7 +6,7 @@
 #include <array>
 #include <string_view>
 
-namespace firmware_text {
+namespace FirmwareText {
 
 struct Translation {
     std::string_view locale;
@@ -44,4 +44,4 @@ inline constexpr std::array<Translation, 25> DISPLAY_TEXTS{{
     {"en", "filename_glyphs", u8"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-+? >/%"},
 }};
 
-}  // namespace firmware_text
+}  // namespace FirmwareText

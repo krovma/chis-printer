@@ -3,17 +3,16 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
+#include "types.h"
 
-namespace app {
+namespace App {
 
-enum class Key : std::uint8_t { None, Up, Down, Left, Right, Confirm };
-enum class Mode : std::uint8_t { Menu, M1, M2, M3, M13 };
-enum class MenuPage : std::uint8_t { Select, Error };
-enum class M2Page : std::uint8_t { List, Preview, Printing, Error };
-enum class M3Page : std::uint8_t { Menu, Pairing, Files, Receive };
-enum class Action : std::uint8_t {
+enum class Key : uint8 { None, Up, Down, Left, Right, Confirm };
+enum class Mode : uint8 { Menu, M1, M2, M3, M13 };
+enum class MenuPage : uint8 { Select, Error };
+enum class M2Page : uint8 { List, Preview, Printing, Error };
+enum class M3Page : uint8 { Menu, Pairing, Files, Receive };
+enum class Action : uint8 {
     None, Redraw, BrightnessDown, BrightnessUp, PaletteDown, PaletteUp,
     EnterM1, ExitM1, EnterM2, ExitM2, EnterM3, ExitM3, ConfirmM1Preview,
     OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint, CancelM3Print,
@@ -21,24 +20,25 @@ enum class Action : std::uint8_t {
     ExitM13Receive,
 };
 
+// Converts key and lifecycle events into actions for the application to execute.
 class StateMachine {
   public:
     Mode mode() const { return mode_; }
     MenuPage menu_page() const { return menu_page_; }
     M2Page m2_page() const { return m2_page_; }
     M3Page m3_page() const { return m3_page_; }
-    std::uint8_t m3_selection() const { return m3_selection_; }
-    std::uint8_t m3_pair_selection() const { return m3_pair_selection_; }
-    std::uint8_t menu_selection() const { return menu_selection_; }
-    std::size_t file_count() const { return file_count_; }
-    std::size_t selected_file() const { return selected_file_; }
-    std::size_t selected_block() const { return selected_block_; }
+    uint8 m3_selection() const { return m3_selection_; }
+    uint8 m3_pair_selection() const { return m3_pair_selection_; }
+    uint8 menu_selection() const { return menu_selection_; }
+    usize file_count() const { return file_count_; }
+    usize selected_file() const { return selected_file_; }
+    usize selected_block() const { return selected_block_; }
 
     Action on_key(Key key, bool m1_waiting, bool m1_preview, bool m3_connected);
     void menu_failed();
     void enter_m1();
     void exit_m1();
-    void enter_m2(std::size_t file_count);
+    void enter_m2(usize file_count);
     void exit_m2();
     void enter_m3();
     void exit_m3();
@@ -47,8 +47,8 @@ class StateMachine {
     void m13_receive_started();
     void m13_receive_finished();
     void m3_connection_lost();
-    void m3_files_ready(std::size_t file_count);
-    void file_opened(std::size_t block_count);
+    void m3_files_ready(usize file_count);
+    void file_opened(usize block_count);
     void file_failed();
     void file_closed();
     void print_started();
@@ -59,13 +59,13 @@ class StateMachine {
     MenuPage menu_page_ = MenuPage::Select;
     M2Page m2_page_ = M2Page::List;
     M3Page m3_page_ = M3Page::Menu;
-    std::uint8_t menu_selection_ = 0;
-    std::uint8_t m3_selection_ = 0;
-    std::uint8_t m3_pair_selection_ = 0;
-    std::size_t file_count_ = 0;
-    std::size_t selected_file_ = 0;
-    std::size_t block_count_ = 0;
-    std::size_t selected_block_ = 0;
+    uint8 menu_selection_ = 0;
+    uint8 m3_selection_ = 0;
+    uint8 m3_pair_selection_ = 0;
+    usize file_count_ = 0;
+    usize selected_file_ = 0;
+    usize block_count_ = 0;
+    usize selected_block_ = 0;
 };
 
-}  // namespace app
+}  // namespace App

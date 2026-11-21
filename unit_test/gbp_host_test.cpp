@@ -4,10 +4,10 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cstdint>
 #include <cstring>
 #include <vector>
 
+#include "types.h"
 #include "gbr/format.h"
 #include "gbp/protocol/packet.h"
 #include "gbp/protocol/packet_writer.h"
@@ -19,16 +19,16 @@
 
 namespace {
 
-std::vector<std::uint8_t> packet(const gbp::protocol::Command command,
-                                 const std::uint8_t compression,
-                                 const std::vector<std::uint8_t>& payload,
-                                 const bool bad_checksum = false) {
-    const auto length = static_cast<std::uint16_t>(payload.size());
-    std::uint16_t checksum = static_cast<std::uint8_t>(command) + compression +
-                             static_cast<std::uint8_t>(length) + static_cast<std::uint8_t>(length >> 8);
-    std::vector<std::uint8_t> bytes{
-        0x88, 0x33, static_cast<std::uint8_t>(command), compression,
-        static_cast<std::uint8_t>(length), static_cast<std::uint8_t>(length >> 8)};
+std::vector<uint8> packet(const Gbp::Protocol::Command command,
+                          const uint8 compression,
+                          const std::vector<uint8>& payload,
+                          const bool bad_checksum = false) {
+    const auto length = static_cast<uint16>(payload.size());
+    uint16 checksum = static_cast<uint8>(command) + compression +
+                      static_cast<uint8>(length) + static_cast<uint8>(length >> 8);
+    std::vector<uint8> bytes{
+        0x88, 0x33, static_cast<uint8>(command), compression,
+        static_cast<uint8>(length), static_cast<uint8>(length >> 8)};
     for (const auto byte : payload) {
         bytes.push_back(byte);
         checksum += byte;
@@ -36,21 +36,21 @@ std::vector<std::uint8_t> packet(const gbp::protocol::Command command,
     if (bad_checksum) {
         ++checksum;
     }
-    bytes.push_back(static_cast<std::uint8_t>(checksum));
-    bytes.push_back(static_cast<std::uint8_t>(checksum >> 8));
+    bytes.push_back(static_cast<uint8>(checksum));
+    bytes.push_back(static_cast<uint8>(checksum >> 8));
     bytes.push_back(0);
     bytes.push_back(0);
     return bytes;
 }
 
-void send(gbp::terminal::Receiver& receiver, const std::vector<std::uint8_t>& bytes) {
+void send(Gbp::Terminal::Receiver& receiver, const std::vector<uint8>& bytes) {
     for (const auto byte : bytes) {
         receiver.feed(byte);
     }
 }
 
-void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes,
-          const std::uint32_t now_us = 0) {
+void send(Gbp::Terminal::M1State& state, const std::vector<uint8>& bytes,
+          const uint32 now_us = 0) {
     for (const auto byte : bytes) {
         if (state.receiver().feed(byte)) {
             state.core1_on_receiver_change(now_us);
@@ -58,11 +58,11 @@ void send(gbp::terminal::M1State& state, const std::vector<std::uint8_t>& bytes,
     }
 }
 
-std::uint8_t reply_status(gbp::terminal::PrinterSession& session, const std::vector<std::uint8_t>& bytes,
-                          const std::uint32_t now_us = 100, const bool full_after_checksum = false) {
-    std::uint8_t device_id = 0;
-    std::uint8_t status = 0;
-    for (std::size_t i = 0; i < bytes.size(); ++i) {
+uint8 reply_status(Gbp::Terminal::PrinterSession& session, const std::vector<uint8>& bytes,
+                          const uint32 now_us = 100, const bool full_after_checksum = false) {
+    uint8 device_id = 0;
+    uint8 status = 0;
+    for (usize i = 0; i < bytes.size(); ++i) {
         const auto reply = session.feed(bytes[i], full_after_checksum && i >= bytes.size() - 2, now_us);
         if (i == bytes.size() - 3) {
             device_id = reply.next_tx;
@@ -74,113 +74,113 @@ std::uint8_t reply_status(gbp::terminal::PrinterSession& session, const std::vec
             assert(reply.packet_end);
         }
     }
-    assert(device_id == gbp::protocol::DEVICE_ID);
+    assert(device_id == Gbp::Protocol::DEVICE_ID);
     return status;
 }
 
 }  // namespace
 
 int main() {
-    using gbp::protocol::Command;
-    std::array<std::uint8_t, 10> init_encoded{};
-    const std::array<std::uint8_t, 10> expected_init{0x88, 0x33, 0x01, 0, 0, 0, 0x01, 0, 0, 0};
-    assert(gbp::protocol::write_packet(Command::Init, false, nullptr, 0,
+    using Gbp::Protocol::Command;
+    std::array<uint8, 10> init_encoded{};
+    const std::array<uint8, 10> expected_init{0x88, 0x33, 0x01, 0, 0, 0, 0x01, 0, 0, 0};
+    assert(Gbp::Protocol::write_packet(Command::Init, false, nullptr, 0,
                                        init_encoded.data(), init_encoded.size()) == init_encoded.size());
     assert(init_encoded == expected_init);
 
-    std::array<std::uint8_t, 16> encoded{};
-    const std::uint8_t print_options[4]{1, 0, 0xE4, 0x40};
-    assert(gbp::protocol::write_packet(Command::Print, false, print_options, 4,
+    std::array<uint8, 16> encoded{};
+    const uint8 print_options[4]{1, 0, 0xE4, 0x40};
+    assert(Gbp::Protocol::write_packet(Command::Print, false, print_options, 4,
                                        encoded.data(), encoded.size()) == 14);
     const auto expected_print = packet(Command::Print, 0, {1, 0, 0xE4, 0x40});
     assert(std::equal(expected_print.begin(), expected_print.end(), encoded.begin()));
-    assert(gbp::protocol::write_packet(Command::Print, false, print_options, 4,
+    assert(Gbp::Protocol::write_packet(Command::Print, false, print_options, 4,
                                        encoded.data(), 13) == 0);
 
-    static gbp::terminal::ImageBuffer image{};
-    gbp::terminal::Receiver receiver(image);
-    assert(receiver.state() == gbp::terminal::ViewState::Waiting);
+    static Gbp::Terminal::ImageBuffer image{};
+    Gbp::Terminal::Receiver receiver(image);
+    assert(receiver.state() == Gbp::Terminal::ViewState::Waiting);
 
     send(receiver, packet(Command::Init, 0, {}));
-    assert(receiver.state() == gbp::terminal::ViewState::Receiving);
+    assert(receiver.state() == Gbp::Terminal::ViewState::Receiving);
 
-    std::vector<std::uint8_t> tile_row(320, 0);
+    std::vector<uint8> tile_row(320, 0);
     tile_row[0] = 0x80;
     tile_row[1] = 0x00;
     send(receiver, packet(Command::Data, 0, tile_row, true));
     assert(receiver.data_frames() == 0);
 
-    const gbr::format::PrintControl custom_print{0, 0x13, 0x2D, 0x7F};
-    const auto header = gbr::format::make_gbr_header(160, 16, custom_print);
-    const std::array<std::uint8_t, 12> expected_header{'K', 'G', 'B', 'R', 2, 160, 16, 0,
+    const Gbr::Format::PrintControl custom_print{0, 0x13, 0x2D, 0x7F};
+    const auto header = Gbr::Format::make_gbr_header(160, 16, custom_print);
+    const std::array<uint8, 12> expected_header{'K', 'G', 'B', 'R', 2, 160, 16, 0,
                                                         0, 0x13, 0x2D, 0x7F};
     assert(header == expected_header);
-    assert((gbr::format::make_gbr_file_header(2) ==
-            std::array<std::uint8_t, 6>{'K', 'G', 'B', 'R', 3, 2}));
-    assert((gbr::format::make_gbr_block_header(160, 16, custom_print) ==
-            std::array<std::uint8_t, 8>{2, 160, 16, 0, 0, 0x13, 0x2D, 0x7F}));
-    assert((gbr::format::m2_print_control(custom_print) ==
-            gbr::format::PrintControl{1, 0x13, 0x2D, 0x7F}));
+    assert((Gbr::Format::make_gbr_file_header(2) ==
+            std::array<uint8, 6>{'K', 'G', 'B', 'R', 3, 2}));
+    assert((Gbr::Format::make_gbr_block_header(160, 16, custom_print) ==
+            std::array<uint8, 8>{2, 160, 16, 0, 0, 0x13, 0x2D, 0x7F}));
+    assert((Gbr::Format::m2_print_control(custom_print) ==
+            Gbr::Format::PrintControl{1, 0x13, 0x2D, 0x7F}));
 
-    std::uint64_t file_number = 0;
-    assert(storage::parse_gbr_filename("00099.GBR", file_number) && file_number == 99);
-    assert(storage::parse_gbr_filename("100000.gbr", file_number) && file_number == 100000);
-    assert(!storage::parse_gbr_filename("1234.gbr", file_number));
-    assert(!storage::parse_gbr_filename("123ab.gbr", file_number));
-    assert(!storage::parse_gbr_filename("99999.gbp", file_number));
+    uint64 file_number = 0;
+    assert(Storage::parse_gbr_filename("00099.GBR", file_number) && file_number == 99);
+    assert(Storage::parse_gbr_filename("100000.gbr", file_number) && file_number == 100000);
+    assert(!Storage::parse_gbr_filename("1234.gbr", file_number));
+    assert(!Storage::parse_gbr_filename("123ab.gbr", file_number));
+    assert(!Storage::parse_gbr_filename("99999.gbp", file_number));
     char path[40]{};
-    assert(storage::format_gbr_path(100000, path, sizeof(path)));
+    assert(Storage::format_gbr_path(100000, path, sizeof(path)));
     assert(std::strcmp(path, "0:/DCIM/100000.gbr") == 0);
 
-    static gbp::terminal::M1State m1;
+    static Gbp::Terminal::M1State m1;
     send(m1, packet(Command::Init, 0, {}));
     send(m1, packet(Command::Data, 0, tile_row));
     send(m1, packet(Command::Print, 0, {0, 0x13, 0x2D, 0x7F}, true));
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Receiving);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Receiving);
     send(m1, packet(Command::Print, 0, {0, 0x13, 0x2D, 0x7F}));
-    assert(m1.receiver().state() == gbp::terminal::ViewState::Waiting);
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
-    gbp::terminal::M1State::Frame first{};
+    assert(m1.receiver().state() == Gbp::Terminal::ViewState::Waiting);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Preview);
+    Gbp::Terminal::M1State::Frame first{};
     assert(m1.acquire_frame(first));
     assert(first.size == 320 && first.data[0] == 0x80);
     assert(first.print_control == custom_print);
     assert(first.palette == 0x1E);
 
     send(m1, packet(Command::Inquiry, 0, {}));
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Preview);
     send(m1, packet(Command::Init, 0, {}));
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Receiving);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Receiving);
     send(m1, packet(Command::Data, 0, tile_row));
     send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Waiting);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Waiting);
     assert(m1.snapshot().discarded_frames == 1);
-    gbp::terminal::M1State::Frame discarded{};
+    Gbp::Terminal::M1State::Frame discarded{};
     assert(!m1.acquire_frame(discarded));
 
     m1.release_frame();
     send(m1, packet(Command::Init, 0, {}));
     send(m1, packet(Command::Data, 0, tile_row));
     send(m1, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}));
-    gbp::terminal::M1State::Frame second{};
+    Gbp::Terminal::M1State::Frame second{};
     assert(m1.acquire_frame(second));
     assert(second.data != first.data && second.generation == first.generation + 1);
     m1.request_confirmation(first.generation);
     m1.core1_process_confirmation();
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Preview);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Preview);
     m1.request_confirmation(second.generation);
     m1.core1_process_confirmation();
-    assert(m1.snapshot().view == gbp::terminal::ViewState::Waiting);
+    assert(m1.snapshot().view == Gbp::Terminal::ViewState::Waiting);
     m1.release_frame();
     assert(receiver.image_size() == 0);
 
-    static gbp::terminal::M1State timed;
+    static Gbp::Terminal::M1State timed;
     const auto init = packet(Command::Init, 0, {});
     const auto data = packet(Command::Data, 0, tile_row);
     const auto print = packet(Command::Print, 0, {7, 0x13, 0xE4, 0x40});
     send(timed, init);
     send(timed, data);
     send(timed, print);
-    gbp::terminal::M1State::Frame timed_frame{};
+    Gbp::Terminal::M1State::Frame timed_frame{};
     assert(timed.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
     timed.release_frame();
 
@@ -213,14 +213,14 @@ int main() {
     assert(timed.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
     timed.release_frame();
 
-    static gbp::terminal::M1State disabled{0};
+    static Gbp::Terminal::M1State disabled{0};
     send(disabled, init);
     send(disabled, data);
     send(disabled, print);
     assert(disabled.acquire_frame(timed_frame) && !timed_frame.append_to_previous);
     disabled.release_frame();
 
-    static gbp::terminal::M1State cutoff{100};
+    static Gbp::Terminal::M1State cutoff{100};
     send(cutoff, init);
     send(cutoff, data);
     cutoff.core1_on_print_complete(1'000);
@@ -235,7 +235,7 @@ int main() {
     assert(!cutoff.core1_expire_completion_window(1'103));
     cutoff.release_frame();
 
-    static gbp::terminal::M1State immediate{0};
+    static Gbp::Terminal::M1State immediate{0};
     send(immediate, init);
     send(immediate, data);
     send(immediate, print);
@@ -246,7 +246,7 @@ int main() {
     assert(immediate.snapshot(101).cut_sequence == 1);
     immediate.release_frame();
 
-    static gbp::terminal::M1State late_group{100};
+    static Gbp::Terminal::M1State late_group{100};
     send(late_group, init);
     send(late_group, data);
     send(late_group, print);
@@ -259,7 +259,7 @@ int main() {
     send(late_group, data, 1'200);
     assert(late_group.snapshot(1'200).cut_sequence == 1);
     late_group.core1_pause_after_cut();
-    assert(late_group.snapshot(1'200).view == gbp::terminal::ViewState::Waiting);
+    assert(late_group.snapshot(1'200).view == Gbp::Terminal::ViewState::Waiting);
 
     disabled.core1_on_print_complete(100);
     send(disabled, init, 101);
@@ -273,7 +273,7 @@ int main() {
     assert(receiver.image_size() == 320);
     assert(receiver.image_data()[0] == 0x80);
 
-    const std::vector<std::uint8_t> compressed{0xFF, 0xA5, 0xFF, 0xA5, 0xBC, 0xA5};
+    const std::vector<uint8> compressed{0xFF, 0xA5, 0xFF, 0xA5, 0xBC, 0xA5};
     send(receiver, packet(Command::Data, 1, compressed));
     assert(receiver.data_frames() == 2);
     assert(receiver.image_size() == 640);
@@ -281,24 +281,24 @@ int main() {
     assert(receiver.image_data()[639] == 0xA5);
 
     send(receiver, packet(Command::Print, 0, {1, 0, 0, 0x40}));
-    assert(receiver.state() == gbp::terminal::ViewState::Preview);
+    assert(receiver.state() == Gbp::Terminal::ViewState::Preview);
     assert(receiver.palette() == 0xE4);
-    const gbr::format::PrintControl zero_palette_print{1, 0, 0, 0x40};
+    const Gbr::Format::PrintControl zero_palette_print{1, 0, 0, 0x40};
     assert(receiver.print_control() == zero_palette_print);
     assert(receiver.buffer_full());
     receiver.confirm_preview();
-    assert(receiver.state() == gbp::terminal::ViewState::Waiting);
+    assert(receiver.state() == Gbp::Terminal::ViewState::Waiting);
     assert(receiver.image_size() == 0);
     assert(receiver.data_frames() == 0);
 
-    gbp::terminal::PrinterSession session;
+    Gbp::Terminal::PrinterSession session;
     const auto inquiry_packet = packet(Command::Inquiry, 0, {});
     const auto empty_data_packet = packet(Command::Data, 0, {});
-    const auto full_data_packet = packet(Command::Data, 0, std::vector<std::uint8_t>(0x280, 0));
+    const auto full_data_packet = packet(Command::Data, 0, std::vector<uint8>(0x280, 0));
     const auto print_packet = packet(Command::Print, 0, {1, 0, 0xE4, 0x40});
-    constexpr std::uint8_t ready = gbp::protocol::STATUS_UNPROCESSED;
-    constexpr std::uint8_t printing = gbp::protocol::STATUS_FULL | gbp::protocol::STATUS_BUSY;
-    constexpr std::uint8_t done = gbp::protocol::STATUS_FULL;
+    constexpr uint8 ready = Gbp::Protocol::STATUS_UNPROCESSED;
+    constexpr uint8 printing = Gbp::Protocol::STATUS_FULL | Gbp::Protocol::STATUS_BUSY;
+    constexpr uint8 done = Gbp::Protocol::STATUS_FULL;
     session.set_simulated_print_time(500'000);
     assert(reply_status(session, init, 100) == 0);
     assert(reply_status(session, full_data_packet, 200) == 0);
@@ -307,13 +307,15 @@ int main() {
     // Core1 may mark the receive buffer full while PRINT's reply bytes clock out.
     assert(reply_status(session, print_packet, 1'000, true) == ready);
     assert(reply_status(session, inquiry_packet, 2'000) == printing);
-    std::uint32_t completed_at = 0;
+    uint32 completed_at = 0;
     assert(!session.take_print_completion(500'999, completed_at));
     assert(reply_status(session, inquiry_packet, 500'999) == printing);
     assert(reply_status(session, inquiry_packet, 501'000) == done);
     assert(session.take_print_completion(501'000, completed_at) && completed_at == 501'000);
     assert(!session.take_print_completion(501'001, completed_at));
-    for (int byte = 0; byte < 16; ++byte) session.feed(0, false, 501'001);
+    for (int byte = 0; byte < 16; ++byte) {
+        session.feed(0, false, 501'001);
+    }
     assert(reply_status(session, inquiry_packet, 501'001) == done);
 
     session.reset();
@@ -357,15 +359,15 @@ int main() {
     assert(reply_status(session, init, 2'800) == 0);
     assert(reply_status(session, full_data_packet, 2'900) == 0);
     assert(reply_status(session, packet(Command::Print, 0, {1, 0, 0xE4, 0x40}, true), 3'000) ==
-           static_cast<std::uint8_t>(ready | gbp::protocol::STATUS_CHECKSUM_ERROR));
+           static_cast<uint8>(ready | Gbp::Protocol::STATUS_CHECKSUM_ERROR));
     assert(reply_status(session, inquiry_packet, 3'050) == ready);
     assert((reply_status(session, packet(Command::Print, 0, {}), 3'100) &
-            gbp::protocol::STATUS_BUSY) == 0);
+            Gbp::Protocol::STATUS_BUSY) == 0);
     assert(!session.take_print_completion(3'200, completed_at));
 
-    gbp::protocol::RleDecoder decoder;
+    Gbp::Protocol::RleDecoder decoder;
     decoder.reset(true);
-    std::array<std::uint8_t, 129> output{};
+    std::array<uint8, 129> output{};
     assert(decoder.feed(0x01, output.data()) == 0);
     assert(decoder.feed(0x12, output.data()) == 1);
     assert(!decoder.complete());

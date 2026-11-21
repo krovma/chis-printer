@@ -4,14 +4,14 @@
 #pragma once
 
 #include <atomic>
-#include <cstdint>
 
+#include "types.h"
 #include "gbp/protocol/packet.h"
 
-namespace gbp::terminal {
+namespace Gbp::Terminal {
 
 struct ByteReply {
-    std::uint8_t next_tx = 0;
+    uint8 next_tx = 0;
     bool packet_end = false;
 };
 
@@ -19,25 +19,25 @@ struct ByteReply {
 // next byte received from the Game Boy.
 class PrinterSession {
   public:
-    ByteReply feed(std::uint8_t byte, bool buffer_full, std::uint32_t now_us);
-    void set_simulated_print_time(std::uint32_t duration_us) { simulated_print_time_us_ = duration_us; }
-    bool take_print_completion(std::uint32_t now_us, std::uint32_t& at_us);
+    ByteReply feed(uint8 byte, bool buffer_full, uint32 now_us);
+    void set_simulated_print_time(uint32 duration_us) { simulated_print_time_us_ = duration_us; }
+    bool take_print_completion(uint32 now_us, uint32& at_us);
     void reset();
 
   private:
-    void apply_command(const protocol::Header& header);
-    void finish_packet(const protocol::Header& header, std::uint32_t now_us);
-    void refresh_print_status(std::uint32_t now_us);
+    void apply_command(const Protocol::Header& header);
+    void finish_packet(const Protocol::Header& header, uint32 now_us);
+    void refresh_print_status(uint32 now_us);
 
-    protocol::PacketParser parser_{};
-    std::uint8_t status_ = 0;
-    std::uint8_t packet_reply_status_ = 0;
-    std::uint32_t simulated_print_time_us_ = 1'000'000;
-    std::uint32_t print_started_at_us_ = 0;
+    Protocol::PacketParser parser_{};
+    uint8 status_ = 0;
+    uint8 packet_reply_status_ = 0;
+    uint32 simulated_print_time_us_ = 1'000'000;
+    uint32 print_started_at_us_ = 0;
     // The IRQ serves STATUS; Core1 claims this deadline once to start AutoCut.
-    std::atomic<std::uint32_t> pending_print_started_at_us_{0};
+    std::atomic<uint32> pending_print_started_at_us_{0};
     bool packet_valid_ = false;
     bool simulated_print_active_ = false;
 };
 
-}  // namespace gbp::terminal
+}  // namespace Gbp::Terminal

@@ -4,55 +4,55 @@
 #include "unit_test/lcd_0.h"
 
 #include <cstdio>
-#include <cstdint>
 
+#include "types.h"
 #include "pico/rand.h"
 #include "pico/time.h"
 
 #include "display/zjy154s0800.h"
 
-namespace unit_test::lcd_0 {
+namespace UnitTest::Lcd0 {
 namespace {
 
-constexpr uint32_t PALETTE_STEP_MS       = 1200;
-constexpr uint32_t FRAME_STEP_MS         = 50;
-constexpr uint16_t MIN_RADIUS            = 8;
-constexpr uint16_t MAX_RADIUS            = 72;
-constexpr uint16_t GRAYSCALE_COUNT       = 16;
-constexpr uint16_t GRAYSCALE_BAR_WIDTH   = display::WIDTH / GRAYSCALE_COUNT;
-constexpr uint16_t GRAYSCALE_SCROLL_STEP = 1;
-static_assert(display::WIDTH % GRAYSCALE_COUNT == 0, "Display width must divide evenly into sixteen grayscale bars");
+constexpr uint32 PALETTE_STEP_MS       = 1200;
+constexpr uint32 FRAME_STEP_MS         = 50;
+constexpr uint16 MIN_RADIUS            = 8;
+constexpr uint16 MAX_RADIUS            = 72;
+constexpr uint16 GRAYSCALE_COUNT       = 16;
+constexpr uint16 GRAYSCALE_BAR_WIDTH   = Display::WIDTH / GRAYSCALE_COUNT;
+constexpr uint16 GRAYSCALE_SCROLL_STEP = 1;
+static_assert(Display::WIDTH % GRAYSCALE_COUNT == 0, "Display width must divide evenly into sixteen grayscale bars");
 
 struct State {
     absolute_time_t next_palette_update;
     absolute_time_t next_frame_update;
-    uint8_t         palette_key;
-    uint16_t        grayscale_offset;
-    bool            grayscale_frame_ready;
+    uint8 palette_key;
+    uint16 grayscale_offset;
+    bool grayscale_frame_ready;
 };
 
 State state{};
 
-uint32_t random_inclusive(const uint32_t minimum, const uint32_t maximum) {
+uint32 random_inclusive(const uint32 minimum, const uint32 maximum) {
     return minimum + get_rand_32() % (maximum - minimum + 1);
 }
 
 [[maybe_unused]] bool draw_random_frame() {
-    const uint16_t       radius   = static_cast<uint16_t>(random_inclusive(MIN_RADIUS, MAX_RADIUS));
-    const uint16_t       center_x = static_cast<uint16_t>(random_inclusive(radius, display::WIDTH - 1 - radius));
-    const uint16_t       center_y = static_cast<uint16_t>(random_inclusive(radius, display::HEIGHT - 1 - radius));
+    const uint16 radius = static_cast<uint16>(random_inclusive(MIN_RADIUS, MAX_RADIUS));
+    const uint16 center_x = static_cast<uint16>(random_inclusive(radius, Display::WIDTH - 1 - radius));
+    const uint16 center_y = static_cast<uint16>(random_inclusive(radius, Display::HEIGHT - 1 - radius));
     // Exclude black so the circle is always visible on the cleared frame.
-    const display::Gray4 gray     = static_cast<display::Gray4>(random_inclusive(1, 0x0F));
+    const Display::Gray4 gray = static_cast<Display::Gray4>(random_inclusive(1, 0x0F));
 
-    display::clear(0x0);
-    display::fill_circle(static_cast<int16_t>(center_x), static_cast<int16_t>(center_y), static_cast<int16_t>(radius), gray);
-    if (!display::present()) {
+    Display::clear(0x0);
+    Display::fill_circle(static_cast<int16>(center_x), static_cast<int16>(center_y), static_cast<int16>(radius), gray);
+    if (!Display::present()) {
         return false;
     }
 
-    const uint16_t diameter = static_cast<uint16_t>(radius * 2 + 1);
-    const uint8_t  palette_key = display::palette_key();
-    const uint16_t rgb444     = display::detail::tint_rgb444(gray, display::BASE_PALETTE_RGB444[palette_key]);
+    const uint16 diameter = static_cast<uint16>(radius * 2 + 1);
+    const uint8 palette_key = Display::palette_key();
+    const uint16 rgb444 = Display::Detail::tint_rgb444(gray, Display::BASE_PALETTE_RGB444[palette_key]);
     printf("LCD circle: size=%ux%u, center=(%u,%u), radius=%u, palette=%u, color=#%03X\n",
            static_cast<unsigned>(diameter),
            static_cast<unsigned>(diameter),
@@ -65,11 +65,11 @@ uint32_t random_inclusive(const uint32_t minimum, const uint32_t maximum) {
 }
 
 void draw_grayscale_bars() {
-    for (uint16_t y = 0; y < display::HEIGHT; ++y) {
-        for (uint16_t x = 0; x < display::WIDTH; ++x) {
-            const uint16_t shifted_x = static_cast<uint16_t>((x + state.grayscale_offset) % display::WIDTH);
-            const auto     gray      = static_cast<display::Gray4>(shifted_x / GRAYSCALE_BAR_WIDTH);
-            display::set_pixel(x, y, gray);
+    for (uint16 y = 0; y < Display::HEIGHT; ++y) {
+        for (uint16 x = 0; x < Display::WIDTH; ++x) {
+            const uint16 shifted_x = static_cast<uint16>((x + state.grayscale_offset) % Display::WIDTH);
+            const auto     gray      = static_cast<Display::Gray4>(shifted_x / GRAYSCALE_BAR_WIDTH);
+            Display::set_pixel(x, y, gray);
         }
     }
 }
@@ -77,14 +77,14 @@ void draw_grayscale_bars() {
 }  // namespace
 
 void init() {
-    display::init();
+    Display::init();
 
-    state.palette_key           = display::WHITE_PALETTE_KEY;
+    state.palette_key           = Display::WHITE_PALETTE_KEY;
     state.grayscale_offset      = 0;
     state.grayscale_frame_ready = false;
-    display::set_palette_key(state.palette_key);
+    Display::set_palette_key(state.palette_key);
     draw_grayscale_bars();
-    display::present();
+    Display::present();
 
     const absolute_time_t now = get_absolute_time();
     state.next_palette_update   = delayed_by_ms(now, PALETTE_STEP_MS);
@@ -95,8 +95,8 @@ void update() {
     const absolute_time_t now = get_absolute_time();
 
     if (time_reached(state.next_palette_update)) {
-        state.palette_key = static_cast<uint8_t>((state.palette_key + 1) % display::PALETTE_COUNT);
-        display::set_palette_key(state.palette_key);
+        state.palette_key = static_cast<uint8>((state.palette_key + 1) % Display::PALETTE_COUNT);
+        Display::set_palette_key(state.palette_key);
         printf("LCD palette: key=%u\n", static_cast<unsigned>(state.palette_key));
         state.next_palette_update = delayed_by_ms(state.next_palette_update, PALETTE_STEP_MS);
     }
@@ -107,12 +107,12 @@ void update() {
             state.grayscale_frame_ready = true;
         }
 
-        if (display::present()) {
+        if (Display::present()) {
             state.grayscale_frame_ready = false;
-            state.grayscale_offset      = static_cast<uint16_t>((state.grayscale_offset + GRAYSCALE_SCROLL_STEP) % display::WIDTH);
+            state.grayscale_offset      = static_cast<uint16>((state.grayscale_offset + GRAYSCALE_SCROLL_STEP) % Display::WIDTH);
             state.next_frame_update     = delayed_by_ms(now, FRAME_STEP_MS);
         }
     }
 }
 
-}  // namespace unit_test::lcd_0
+}  // namespace UnitTest::Lcd0

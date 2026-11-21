@@ -19,10 +19,10 @@ const std::string M3_CONNECTION =
     "\n[m3]\nprinter_name = \"Qsprinter\"\n"
     "pin = \"0000\"\n";
 
-config::FirmwareConfig parse(const std::string& contents) {
-    config::FirmwareConfig result;
-    assert(config::parse_firmware_config(contents, result));
-    assert(result.display.palette_key == display::WHITE_PALETTE_KEY);
+Config::FirmwareConfig parse(const std::string& contents) {
+    Config::FirmwareConfig result;
+    assert(Config::parse_firmware_config(contents, result));
+    assert(result.display.palette_key == Display::WHITE_PALETTE_KEY);
     assert(result.display.backlight_percent == 75);
     return result;
 }
@@ -30,10 +30,10 @@ config::FirmwareConfig parse(const std::string& contents) {
 }  // namespace
 
 int main() {
-    static_assert(gbp::host::valid_rx_sample_delay_us(2));
-    static_assert(gbp::host::valid_rx_sample_delay_us(10));
-    static_assert(!gbp::host::valid_rx_sample_delay_us(1));
-    static_assert(!gbp::host::valid_rx_sample_delay_us(11));
+    static_assert(Gbp::Host::valid_rx_sample_delay_us(2));
+    static_assert(Gbp::Host::valid_rx_sample_delay_us(10));
+    static_assert(!Gbp::Host::valid_rx_sample_delay_us(1));
+    static_assert(!Gbp::Host::valid_rx_sample_delay_us(11));
 
     assert(parse(BASE_CONFIG).m2.rx_sample_delay_us == 5);
     assert(parse(BASE_CONFIG).m1.auto_cut_time_limit_us == 1'000'000);
@@ -64,20 +64,20 @@ int main() {
     std::ifstream example{"config.example.toml"};
     assert(example);
     const std::string example_text{std::istreambuf_iterator<char>{example}, std::istreambuf_iterator<char>{}};
-    config::FirmwareConfig example_config;
-    assert(config::parse_firmware_config(example_text, example_config));
+    Config::FirmwareConfig example_config;
+    assert(Config::parse_firmware_config(example_text, example_config));
     assert(example_config.display.backlight_percent == 50);
     assert(example_config.m1.auto_cut_time_limit_us == 1'000'000);
     assert(example_config.m1.simulated_print_time_us == 1'000'000);
     assert(example_config.m2.rx_sample_delay_us == 5);
     assert(example_config.m3.printer_name[0] == 'Q');
     assert(example_config.m3.pin[0] == '0');
-    assert(example_config.m3.printer_type == config::PrinterType::Mm58);
+    assert(example_config.m3.printer_type == Config::PrinterType::Mm58);
     assert(example_config.m3.resolved_advance().printable_width_dots == 384);
     assert(example_config.m3.resolved_advance().image_scale == 2);
     const auto configured = parse(BASE_CONFIG + M3_CONNECTION + "printer_type = \"80mm\"\n");
     assert(configured.m3.printer_name[0] == 'Q' && configured.m3.pin[0] == '0');
-    assert(configured.m3.printer_type == config::PrinterType::Mm80);
+    assert(configured.m3.printer_type == Config::PrinterType::Mm80);
     assert(configured.m3.resolved_advance().printable_width_dots == 576);
     assert(configured.m3.resolved_advance().image_scale == 3);
     assert(parse(BASE_CONFIG + M3_CONNECTION).m3.resolved_advance().image_scale == 2);
@@ -106,8 +106,8 @@ int main() {
                                 "pin = \"\"\n");
     assert(fallback.m3.printer_name[0] == 'Q' && fallback.m3.pin[0] == '0');
 
-    config::FirmwareConfig unchanged;
+    Config::FirmwareConfig unchanged;
     unchanged.m2.rx_sample_delay_us = 8;
-    assert(!config::parse_firmware_config("format_version = 1\n", unchanged));
+    assert(!Config::parse_firmware_config("format_version = 1\n", unchanged));
     assert(unchanged.m2.rx_sample_delay_us == 8);
 }

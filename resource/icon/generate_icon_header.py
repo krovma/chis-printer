@@ -148,7 +148,7 @@ def bytes_literal(data: bytes, indent: str = "    ") -> str:
 
 
 def write_array(lines: list[str], name: str, data: bytes) -> None:
-    lines.append(f"inline constexpr std::uint8_t {name}[] = {{")
+    lines.append(f"inline constexpr uint8 {name}[] = {{")
     lines.append(bytes_literal(data))
     lines.append("};")
     lines.append("")
@@ -170,25 +170,24 @@ def generate_header(entries: list[IconEntry], manifest_path: Path, alpha_thresho
         "",
         "#pragma once",
         "",
-        "#include <cstddef>",
-        "#include <cstdint>",
+        '#include "types.h"',
         "",
-        "namespace kuper::icons {",
+        "namespace Kuper::Icons {",
         "",
         "struct IconBitmap4bpp {",
-        "    std::uint16_t width;",
-        "    std::uint16_t height;",
-        "    std::uint16_t row_stride;",
-        "    const std::uint8_t* bytes;",
-        "    std::size_t byte_count;",
+        "    uint16 width;",
+        "    uint16 height;",
+        "    uint16 row_stride;",
+        "    const uint8* bytes;",
+        "    usize byte_count;",
         "};",
         "",
         "struct IconMask1bpp {",
-        "    std::uint16_t width;",
-        "    std::uint16_t height;",
-        "    std::uint16_t row_stride;",
-        "    const std::uint8_t* bytes;",
-        "    std::size_t byte_count;",
+        "    uint16 width;",
+        "    uint16 height;",
+        "    uint16 row_stride;",
+        "    const uint8* bytes;",
+        "    usize byte_count;",
         "};",
         "",
     ]
@@ -205,16 +204,16 @@ def generate_header(entries: list[IconEntry], manifest_path: Path, alpha_thresho
             base = f"ICON_{upper}_{entry.width}"
             pixel_stride = entry.width // 2
             lines.append(f"    {{{entry.width}, {entry.height}, {pixel_stride}, {base}_DATA, sizeof({base}_DATA)}},")
-        lines.extend(["};", f"inline constexpr std::size_t ICON_{upper}_COUNT = sizeof(ICON_{upper}) / sizeof(ICON_{upper}[0]);", ""])
+        lines.extend(["};", f"inline constexpr usize ICON_{upper}_COUNT = sizeof(ICON_{upper}) / sizeof(ICON_{upper}[0]);", ""])
 
         lines.append(f"inline constexpr IconMask1bpp ICON_{upper}_MASK[] = {{")
         for entry in variants:
             base = f"ICON_{upper}_{entry.width}"
             mask_stride = (entry.width + 7) // 8
             lines.append(f"    {{{entry.width}, {entry.height}, {mask_stride}, {base}_MASK_DATA, sizeof({base}_MASK_DATA)}},")
-        lines.extend(["};", f"inline constexpr std::size_t ICON_{upper}_MASK_COUNT = sizeof(ICON_{upper}_MASK) / sizeof(ICON_{upper}_MASK[0]);", ""])
+        lines.extend(["};", f"inline constexpr usize ICON_{upper}_MASK_COUNT = sizeof(ICON_{upper}_MASK) / sizeof(ICON_{upper}_MASK[0]);", ""])
 
-    lines.extend(["}  // namespace kuper::icons", ""])
+    lines.extend(["}  // namespace Kuper::Icons", ""])
     return "\n".join(lines)
 
 

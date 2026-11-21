@@ -7,15 +7,16 @@
 #include <cstdio>
 #include <string_view>
 
+#include "types.h"
 #include "ff.h"
 #include "hardware/gpio.h"
 #include "pin_config.h"
 #include "tf_card.h"
 
-namespace storage {
+namespace Storage {
 namespace {
 
-constexpr std::size_t MAX_CONFIG_BYTES = 4096;
+constexpr usize MAX_CONFIG_BYTES = 4096;
 FATFS filesystem{};
 bool mounted = false;
 std::array<char, MAX_CONFIG_BYTES> config_buffer{};
@@ -23,19 +24,19 @@ std::array<char, MAX_CONFIG_BYTES> config_buffer{};
 }  // namespace
 
 bool mount_initialized_card() {
-    if (gpio_get(board::SD_CARD_DETECT_N)) {
+    if (gpio_get(Board::SD_CARD_DETECT_N)) {
         printf("SD card not detected\n");
         return false;
     }
 
     pico_fatfs_spi_config_t spi_config{
-        board::SD_SPI,
-        board::SD_SPI_INITIAL_BAUD,
-        board::SD_SPI_BAUD,
-        board::SD_MISO,
-        board::SD_CS_N,
-        board::SD_SCK,
-        board::SD_MOSI,
+        Board::SD_SPI,
+        Board::SD_SPI_INITIAL_BAUD,
+        Board::SD_SPI_BAUD,
+        Board::SD_MISO,
+        Board::SD_CS_N,
+        Board::SD_SCK,
+        Board::SD_MOSI,
         true,
     };
     if (!pico_fatfs_set_config(&spi_config)) {
@@ -67,7 +68,7 @@ bool mount_initialized_card() {
     return true;
 }
 
-bool load_firmware_config(config::FirmwareConfig& output) {
+bool load_firmware_config(Config::FirmwareConfig& output) {
     if (!mounted) {
         return false;
     }
@@ -94,12 +95,12 @@ bool load_firmware_config(config::FirmwareConfig& output) {
         return false;
     }
 
-    const bool parsed = config::parse_firmware_config(
-        std::string_view{config_buffer.data(), static_cast<std::size_t>(bytes_read)}, output);
+    const bool parsed = Config::parse_firmware_config(
+        std::string_view{config_buffer.data(), static_cast<usize>(bytes_read)}, output);
     if (!parsed) {
         printf("config.toml settings invalid\n");
     }
     return parsed;
 }
 
-}  // namespace storage
+}  // namespace Storage

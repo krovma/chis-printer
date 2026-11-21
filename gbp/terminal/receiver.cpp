@@ -5,36 +5,39 @@
 
 #include <algorithm>
 
-namespace gbp::terminal {
+#include "types.h"
 
-bool Receiver::feed(const std::uint8_t byte) {
-    const protocol::ParseResult result = parser_.feed(byte);
+namespace Gbp::Terminal {
+
+bool Receiver::feed(const uint8 byte) {
+    const Protocol::ParseResult result = parser_.feed(byte);
     if (state_ == ViewState::Preview) {
         return false;
     }
 
     switch (result.event) {
-        case protocol::Event::PacketStart:
+        case Protocol::Event::PacketStart:
             begin_packet(result.header);
-            if (result.header.command == static_cast<std::uint8_t>(protocol::Command::Data) &&
-                result.header.length != 0 && !group_started_) {
+            if (result.header.command == static_cast<uint8>(Protocol::Command::Data) && result.header.length != 0 &&
+                !group_started_) {
                 group_started_ = true;
                 data_group_started_ = true;
-                if (state_ == ViewState::Waiting) state_ = ViewState::Receiving;
+                if (state_ == ViewState::Waiting) {
+                    state_ = ViewState::Receiving;
+                }
                 return true;
             }
             if (state_ == ViewState::Waiting &&
-                (result.header.command == static_cast<std::uint8_t>(protocol::Command::Init) ||
-                 (result.header.command == static_cast<std::uint8_t>(protocol::Command::Data) &&
-                  result.header.length != 0))) {
+                (result.header.command == static_cast<uint8>(Protocol::Command::Init) ||
+                 (result.header.command == static_cast<uint8>(Protocol::Command::Data) && result.header.length != 0))) {
                 state_ = ViewState::Receiving;
                 return true;
             }
             break;
-        case protocol::Event::PayloadByte:
+        case Protocol::Event::PayloadByte:
             consume_payload(result.header, result.payload);
             break;
-        case protocol::Event::PacketComplete:
+        case Protocol::Event::PacketComplete:
             return complete_packet(result);
         default:
             break;
@@ -60,8 +63,8 @@ void Receiver::reset() {
     packet_start_size_ = 0;
     data_frames_ = 0;
     palette_ = 0xE4;
-    print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
-    pending_print_control_ = gbr::format::DEFAULT_PRINT_CONTROL;
+    print_control_ = Gbr::Format::DEFAULT_PRINT_CONTROL;
+    pending_print_control_ = Gbr::Format::DEFAULT_PRINT_CONTROL;
     print_payload_index_ = 0;
     packet_failed_ = false;
     packet_overflow_ = false;
@@ -88,32 +91,32 @@ void Receiver::use_buffer(ImageBuffer& image) {
     reset();
 }
 
-void Receiver::begin_packet(const protocol::Header& header) {
+void Receiver::begin_packet(const Protocol::Header& header) {
     packet_start_size_ = image_size_;
     packet_open_ = true;
     packet_failed_ = false;
     packet_overflow_ = false;
     print_payload_index_ = 0;
     pending_print_control_ = print_control_;
-    if (header.command == static_cast<std::uint8_t>(protocol::Command::Data)) {
+    if (header.command == static_cast<uint8>(Protocol::Command::Data)) {
         packet_failed_ = header.compression > 1;
         decoder_.reset(header.compression == 1);
     }
 }
 
-void Receiver::consume_payload(const protocol::Header& header, const std::uint8_t byte) {
-    if (header.command == static_cast<std::uint8_t>(protocol::Command::Print)) {
+void Receiver::consume_payload(const Protocol::Header& header, const uint8 byte) {
+    if (header.command == static_cast<uint8>(Protocol::Command::Print)) {
         if (print_payload_index_ < pending_print_control_.size()) {
             pending_print_control_[print_payload_index_++] = byte;
         }
         return;
     }
-    if (header.command != static_cast<std::uint8_t>(protocol::Command::Data) || packet_failed_) {
+    if (header.command != static_cast<uint8>(Protocol::Command::Data) || packet_failed_) {
         return;
     }
 
-    std::uint8_t decoded[129];
-    const std::size_t count = decoder_.feed(byte, decoded);
+    uint8 decoded[129];
+    const usize count = decoder_.feed(byte, decoded);
     if (count > IMAGE_CAPACITY - image_size_) {
         packet_failed_ = true;
         packet_overflow_ = true;
@@ -123,23 +126,23 @@ void Receiver::consume_payload(const protocol::Header& header, const std::uint8_
     image_size_ += count;
 }
 
-bool Receiver::complete_packet(const protocol::ParseResult& packet) {
+bool Receiver::complete_packet(const Protocol::ParseResult& packet) {
     packet_open_ = false;
     if (!packet.checksum_valid) {
         image_size_ = packet_start_size_;
         return false;
     }
 
-    switch (static_cast<protocol::Command>(packet.header.command)) {
-        case protocol::Command::Init:
-        case protocol::Command::Break:
+    switch (static_cast<Protocol::Command>(packet.header.command)) {
+        case Protocol::Command::Init:
+        case Protocol::Command::Break:
             image_size_ = 0;
             data_frames_ = 0;
             buffer_full_ = false;
             group_started_ = false;
             data_group_started_ = false;
             return true;
-        case protocol::Command::Data:
+        case Protocol::Command::Data:
             if (packet.header.length == 0) {
                 return false;
             }
@@ -152,13 +155,12 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
             }
             ++data_frames_;
             return true;
-        case protocol::Command::Print:
-            if (packet.header.length < 4 || image_size_ < BYTES_PER_TILE_ROW ||
-                image_size_ % BYTES_PER_TILE_ROW != 0) {
+        case Protocol::Command::Print:
+            if (packet.header.length < 4 || image_size_ < BYTES_PER_TILE_ROW || image_size_ % BYTES_PER_TILE_ROW != 0) {
                 return false;
             }
             print_control_ = pending_print_control_;
-            palette_ = gbr::format::preview_palette(print_control_[2]);
+            palette_ = Gbr::Format::preview_palette(print_control_[2]);
             state_ = ViewState::Preview;
             buffer_full_ = true;
             return true;
@@ -167,4 +169,4 @@ bool Receiver::complete_packet(const protocol::ParseResult& packet) {
     }
 }
 
-}  // namespace gbp::terminal
+}  // namespace Gbp::Terminal

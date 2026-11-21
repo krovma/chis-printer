@@ -6,7 +6,7 @@
 #include "app/state_machine.h"
 
 int main() {
-    using namespace app;
+    using namespace App;
     StateMachine state;
     assert(state.mode() == Mode::Menu);
     assert(state.on_key(Key::Left, false, false, false) == Action::BrightnessDown);

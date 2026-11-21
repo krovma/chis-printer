@@ -4,35 +4,35 @@
 #pragma once
 
 #include <array>
-#include <cstdint>
 #include <string_view>
 
+#include "types.h"
 #include "display/zjy154s0800.h"
 #include "gbp/host/link_timing.h"
 
-namespace config {
+namespace Config {
 
 struct DisplayConfig {
-    std::uint8_t palette_key       = display::WHITE_PALETTE_KEY;
-    std::uint8_t backlight_percent = display::BACKLIGHT_DUTY_PERCENT[display::DEFAULT_BACKLIGHT_KEY];
+    uint8 palette_key       = Display::WHITE_PALETTE_KEY;
+    uint8 backlight_percent = Display::BACKLIGHT_DUTY_PERCENT[Display::DEFAULT_BACKLIGHT_KEY];
 };
 
 struct M1Config {
-    std::uint32_t auto_cut_time_limit_us = 1'000'000;
-    std::uint32_t simulated_print_time_us = 1'000'000;
+    uint32 auto_cut_time_limit_us = 1'000'000;
+    uint32 simulated_print_time_us = 1'000'000;
 };
 
 struct M2Config {
-    std::uint8_t rx_sample_delay_us = gbp::host::RX_SAMPLE_DELAY_DEFAULT_US;
+    uint8 rx_sample_delay_us = Gbp::Host::RX_SAMPLE_DELAY_DEFAULT_US;
 };
 
-enum class PrinterType : std::uint8_t { Mm58, Mm80 };
+enum class PrinterType : uint8 { Mm58, Mm80 };
 
 struct M3AdvanceConfig {
     // Zero selects the values associated with the printer type. Printable width is
     // used to validate that the image fits; ESC a handles centering on paper.
-    std::uint16_t printable_width_dots = 0;
-    std::uint8_t image_scale = 0;
+    uint16 printable_width_dots = 0;
+    uint8 image_scale = 0;
 };
 
 struct M3AdvanceOverrides {
@@ -58,8 +58,12 @@ struct M3Config {
     constexpr M3AdvanceConfig resolved_advance() const {
         M3AdvanceConfig settings = default_m3_advance(printer_type);
         const M3AdvanceConfig& overrides = printer_type == PrinterType::Mm80 ? advance.mm80 : advance.mm58;
-        if (overrides.printable_width_dots != 0) settings.printable_width_dots = overrides.printable_width_dots;
-        if (overrides.image_scale != 0) settings.image_scale = overrides.image_scale;
+        if (overrides.printable_width_dots != 0) {
+            settings.printable_width_dots = overrides.printable_width_dots;
+        }
+        if (overrides.image_scale != 0) {
+            settings.image_scale = overrides.image_scale;
+        }
         return settings;
     }
 };
@@ -74,4 +78,4 @@ struct FirmwareConfig {
 // The display section is required; M1, M2, and M3 settings are optional.
 bool parse_firmware_config(std::string_view contents, FirmwareConfig& output);
 
-}  // namespace config
+}  // namespace Config

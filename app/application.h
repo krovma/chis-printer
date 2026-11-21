@@ -5,9 +5,9 @@
 
 #include "config/firmware_config.h"
 
-namespace app {
+namespace App {
 
 // Core0 owns the UI and SD card. Core1 runs the link or printer transport.
-void run(bool card_mounted, const config::FirmwareConfig& firmware_config);
+void run(bool card_mounted, const Config::FirmwareConfig& firmware_config);
 
-}  // namespace app
+}  // namespace App

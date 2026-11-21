@@ -5,7 +5,9 @@
 
 #include <algorithm>
 
-namespace gbp::protocol {
+#include "types.h"
+
+namespace Gbp::Protocol {
 
 void RleDecoder::reset(const bool compressed) {
     compressed_ = compressed;
@@ -13,7 +15,7 @@ void RleDecoder::reset(const bool compressed) {
     remaining_ = 0;
 }
 
-std::size_t RleDecoder::feed(const std::uint8_t input, std::uint8_t output[129]) {
+usize RleDecoder::feed(const uint8 input, uint8 output[129]) {
     if (!compressed_) {
         output[0] = input;
         return 1;
@@ -25,7 +27,7 @@ std::size_t RleDecoder::feed(const std::uint8_t input, std::uint8_t output[129])
                 remaining_ = input + 1;
                 state_ = State::Literal;
             } else {
-                remaining_ = static_cast<std::uint8_t>(input - 0x80 + 2);
+                remaining_ = static_cast<uint8>(input - 0x80 + 2);
                 state_ = State::RepeatValue;
             }
             return 0;
@@ -47,4 +49,4 @@ bool RleDecoder::complete() const {
     return state_ == State::Control;
 }
 
-}  // namespace gbp::protocol
+}  // namespace Gbp::Protocol

@@ -41,13 +41,13 @@ python resource/icon/generate_icon_header.py
 
 ## C++ 接口
 
-生成头文件位于命名空间 `kuper::icons`，定义 `IconBitmap4bpp` 和 `IconMask1bpp`，两者都提供 `width`、`height`、`row_stride`、`bytes` 和 `byte_count`。
+生成头文件位于命名空间 `Kuper::Icons`，定义 `IconBitmap4bpp` 和 `IconMask1bpp`，两者都提供 `width`、`height`、`row_stride`、`bytes` 和 `byte_count`。
 
 同一 `id` 的多尺寸资源使用并行变体表：
 
 ```cpp
-const auto& pixels = kuper::icons::ICON_PRINTER[0];
-const auto& mask = kuper::icons::ICON_PRINTER_MASK[0];
+const auto& pixels = Kuper::Icons::ICON_PRINTER[0];
+const auto& mask = Kuper::Icons::ICON_PRINTER_MASK[0];
 ```
 
 `ICON_<ID>_COUNT` 和 `ICON_<ID>_MASK_COUNT` 给出表项数量。表项顺序与 `manifest.json` 中相同 ID 的出现顺序一致；原始数组使用内部名称 `ICON_<ID>_<WIDTH>_DATA` 和 `ICON_<ID>_<WIDTH>_MASK_DATA`。

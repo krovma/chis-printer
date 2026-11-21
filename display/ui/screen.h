@@ -3,16 +3,16 @@
 
 #pragma once
 
-#include <cstdint>
 #include <string_view>
 
+#include "types.h"
 #include "display/zjy154s0800.h"
 
-namespace display::ui {
+namespace Display::Ui {
 
 // Clear the display and draw text in the center of the 240 x 240 screen.
 // The caller submits the resulting frame with present().
 bool draw_centered_text(std::string_view text, Gray4 background, Gray4 foreground,
-                        std::int16_t letter_spacing = 0);
+                        int16 letter_spacing = 0);
 
-}  // namespace display::ui
+}  // namespace Display::Ui

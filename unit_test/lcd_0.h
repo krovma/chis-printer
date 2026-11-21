@@ -3,7 +3,7 @@
 
 #pragma once
 
-namespace unit_test::lcd_0 {
+namespace UnitTest::Lcd0 {
 
 // Initialize the LCD and reset the palette test state. The display module
 // applies its default 50% backlight preset after the first frame completes.
@@ -13,4 +13,4 @@ void init();
 // non-blocking and should be called continuously from the application loop.
 void update();
 
-}  // namespace unit_test::lcd_0
+}  // namespace UnitTest::Lcd0

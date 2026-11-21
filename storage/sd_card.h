@@ -5,10 +5,10 @@
 
 #include "config/firmware_config.h"
 
-namespace storage {
+namespace Storage {
 
 // Requires the active-low card-detect GPIO to have been initialized.
 bool mount_initialized_card();
-bool load_firmware_config(config::FirmwareConfig& output);
+bool load_firmware_config(Config::FirmwareConfig& output);
 
-}  // namespace storage
+}  // namespace Storage
