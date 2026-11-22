@@ -10,16 +10,23 @@ namespace App {
 enum class Key : uint8 { None, Up, Down, Left, Right, Confirm };
 enum class Mode : uint8 { Menu, M1, M2, M3, M13, Settings };
 enum class MenuPage : uint8 { Select, Error };
-enum class M2Page : uint8 { List, Preview, Printing, Error };
+enum class M2Page : uint8 { List, Preview, LabelWarning, Printing, Error };
 enum class M3Page : uint8 { Menu, Pairing, Files, Receive };
-enum class Setting : uint8 { Locale, Palette, Backlight, AutoCut, PrintTime, RxDelay, PrinterType, Count };
+enum class Setting : uint8 {
+    Locale, Palette, Backlight, AutoCut, PrintTime, RxDelay, PrinterType, ImageScale,
+    Centering, LeftMargin, PaperType, LabelLength, Protocol, Count
+};
+constexpr bool setting_visible(const Setting setting, const bool firmware_centering) {
+    return setting != Setting::LeftMargin || firmware_centering;
+}
 enum class Action : uint8 {
     None, Redraw, PaletteDown, PaletteUp,
     EnterM1, ExitM1, EnterM2, ExitM2, EnterM3, ExitM3, ConfirmM1Preview,
     OpenFile, CloseFile, PreviousBlock, NextBlock, StartPrint, CancelM3Print,
+    ContinueLabelPrint, CancelLabelPrint,
     PairM3, DisconnectM3, EnterM3Files, EnterM13, EnterM13Receive, ExitM13,
     ExitM13Receive, EnterSettings, ExitSettings, BeginSetting, CancelSetting,
-    DecreaseSetting, IncreaseSetting, SaveSetting,
+    DecreaseSetting, IncreaseSetting, ResetLeftMargin, BeginAndResetLeftMargin, SaveSetting,
 };
 
 // Converts key and lifecycle events into actions for the application to execute.
@@ -38,7 +45,8 @@ class StateMachine {
     usize selected_file() const { return selected_file_; }
     usize selected_block() const { return selected_block_; }
 
-    Action on_key(Key key, bool m1_waiting, bool m1_preview, bool m3_connected);
+    Action on_key(Key key, bool m1_waiting, bool m1_preview, bool m3_connected,
+                  bool firmware_centering = false);
     void menu_failed();
     void enter_m1();
     void exit_m1();
@@ -59,6 +67,8 @@ class StateMachine {
     void file_failed();
     void file_closed();
     void print_started();
+    void label_warning();
+    void label_warning_cancelled();
     void print_finished(bool success);
 
   private:

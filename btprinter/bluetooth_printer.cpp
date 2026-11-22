@@ -77,25 +77,41 @@ bool BluetoothPrinter::pop_trace(TraceEvent& event) {
     return true;
 }
 
+bool BluetoothPrinter::set_config(const Config::M3Config& config) {
+    const Config::M3AdvanceConfig settings = config.resolved_advance();
+    PrintCommandEncoder* strategy = protocol_encoder(config.protocol, encoder_);
+    if (!Config::printer_type_supports_scale(config.printer_type, settings.image_scale_quarters) ||
+        settings.printable_width_dots < Config::scaled_dots(SOURCE_WIDTH, settings.image_scale_quarters) ||
+        strategy == nullptr ||
+        config.label_length_mm == 0 || config.label_length_mm > Config::MAX_LABEL_LENGTH_MM ||
+        config.label_gap_mm > Config::MAX_LABEL_GAP_MM ||
+        (config.centering != Config::CenteringMode::Printer &&
+         config.centering != Config::CenteringMode::Firmware) ||
+        (config.paper_type != Config::PaperType::Roll && config.paper_type != Config::PaperType::Label)) {
+        std::printf("ERROR: M3 BT invalid printer profile type=%u width=%u scale_quarters=%u\n",
+                    static_cast<unsigned>(config.printer_type),
+                    static_cast<unsigned>(settings.printable_width_dots),
+                    static_cast<unsigned>(settings.image_scale_quarters));
+        connection_state_.store(ConnectionState::Error, std::memory_order_release);
+        return false;
+    }
+    image_scale_quarters_ = settings.image_scale_quarters;
+    printable_width_dots_ = settings.printable_width_dots;
+    left_margin_dots_ = settings.left_margin_dots;
+    paper_type_ = config.paper_type;
+    centering_ = config.centering;
+    command_encoder_ = strategy;
+    return true;
+}
+
 bool BluetoothPrinter::initialize(const Config::M3Config& config) {
+    if (!set_config(config)) return false;
     if (initialized_.load(std::memory_order_acquire)) {
         KP_BT_LOG_DEBUG("M3 BT init already ready t=%lu ms\n",
                         static_cast<unsigned long>(time_us_32() / 1000u));
         return true;
     }
     printer_name_ = config.printer_name;
-    const ::Config::M3AdvanceConfig defaults = ::Config::default_m3_advance(config.printer_type);
-    const ::Config::M3AdvanceConfig settings = config.resolved_advance();
-    if (!valid_image_scale(settings.image_scale) || settings.image_scale != defaults.image_scale ||
-        settings.printable_width_dots < SOURCE_WIDTH * settings.image_scale) {
-        std::printf("ERROR: M3 BT invalid printer profile type=%u width=%u scale=%u\n",
-                    static_cast<unsigned>(config.printer_type),
-                    static_cast<unsigned>(settings.printable_width_dots),
-                    static_cast<unsigned>(settings.image_scale));
-        connection_state_.store(ConnectionState::Error, std::memory_order_release);
-        return false;
-    }
-    image_scale_ = settings.image_scale;
     std::memset(pin_.data(), 0, pin_.size());
     std::memcpy(pin_.data(), config.pin.data(), pin_.size() - 1);
     if (pin_[0] == '\0') {
@@ -274,7 +290,8 @@ void BluetoothPrinter::service() {
 
 bool BluetoothPrinter::start(const uint8* image, const usize size,
                              const uint8 palette, const bool first_block,
-                             const bool last_block) {
+                             const bool last_block, const usize before_feed_dots,
+                             const usize after_feed_dots) {
     if (!connected() || image == nullptr || size == 0) {
         return false;
     }
@@ -283,21 +300,20 @@ bool BluetoothPrinter::start(const uint8* image, const usize size,
         cyw43_arch_lwip_end();
         return false;
     }
-    if (!encoder_.reset(image, size, palette, image_scale_)) {
+    if (!command_encoder_->reset({image, size, palette, image_scale_quarters_, first_block, last_block,
+                                   paper_type_, before_feed_dots, after_feed_dots,
+                                   printable_width_dots_, centering_, left_margin_dots_})) {
         status_.store(PrintStatus::Error, std::memory_order_release);
         cyw43_arch_lwip_end();
         return false;
     }
-    header_sent_ = !first_block && rfcomm_cid_ != 0;
-    footer_sent_ = !last_block;
     printer_flow_paused_ = false;
     tx_length_ = 0;
     tx_offset_ = 0;
     progress_.store(0, std::memory_order_release);
-    total_.store(encoder_.encoded_size() + (header_sent_ ? 0 : 8) +
-                     (footer_sent_ ? 0 : 9), std::memory_order_release);
+    total_.store(command_encoder_->encoded_size(), std::memory_order_release);
     KP_BT_TRACE_DEBUG(TraceKind::JobStart, static_cast<uint32>(size),
-                      static_cast<uint32>(encoder_.band_count()));
+                      static_cast<uint32>(total()));
     print_pending_.store(true, std::memory_order_release);
     status_.store(PrintStatus::Printing, std::memory_order_release);
     const bool send_ready = request_can_send_now();
@@ -555,7 +571,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
         return;
     }
     if (event == RFCOMM_EVENT_CAN_SEND_NOW) {
-        send_next_band();
+        send_next_chunk();
         return;
     }
     if (event == RFCOMM_EVENT_CHANNEL_CLOSED) {
@@ -708,59 +724,27 @@ void BluetoothPrinter::query_next_remote_name() {
     fail_connection();
 }
 
-void BluetoothPrinter::send_next_band() {
+void BluetoothPrinter::send_next_chunk() {
     if (rfcomm_cid_ == 0 || !print_pending_.load(std::memory_order_acquire) || printer_flow_paused_) {
         return;
     }
     if (tx_offset_ == tx_length_) {
-        if (!header_sent_) {
-            // ESC @ (1B 40): initialize printer.
-            band_buffer_[0] = 0x1b;
-            band_buffer_[1] = 0x40;
-            // ESC a 1 (1B 61 01): center the image in the printable area.
-            band_buffer_[2] = 0x1b;
-            band_buffer_[3] = 0x61;
-            band_buffer_[4] = 0x01;
-            // ESC 3 0 (1B 33 00): set line spacing to zero between 24-dot bands.
-            band_buffer_[5] = 0x1b;
-            band_buffer_[6] = 0x33;
-            band_buffer_[7] = 0x00;
-            tx_length_ = 8;
-            tx_offset_ = 0;
-            header_sent_ = true;
-        } else if (encoder_.band_index() < encoder_.band_count()) {
-            if (!encoder_.next_band(band_buffer_.data(), band_buffer_.size(), tx_length_)) {
-                fail_print();
-                return;
-            }
-            tx_offset_ = 0;
-        } else if (!footer_sent_) {
-            // ESC 2 (1B 32): restore default line spacing.
-            band_buffer_[0] = 0x1b;
-            band_buffer_[1] = 0x32;
-            // ESC d 3 (1B 64 03): print and feed three lines.
-            band_buffer_[2] = 0x1b;
-            band_buffer_[3] = 0x64;
-            band_buffer_[4] = 0x03;
-            // ESC a 0 (1B 61 00): restore left alignment.
-            band_buffer_[5] = 0x1b;
-            band_buffer_[6] = 0x61;
-            band_buffer_[7] = 0x00;
-            // LF (0A): print and feed one line.
-            band_buffer_[8] = '\n';
-            tx_length_ = 9;
-            tx_offset_ = 0;
-            footer_sent_ = true;
-        } else {
+        tx_offset_ = 0;
+        const auto result = command_encoder_->next_chunk(tx_buffer_.data(), tx_buffer_.size(), tx_length_);
+        if (result == EncodeResult::Complete) {
             print_pending_.store(false, std::memory_order_release);
             status_.store(PrintStatus::Success, std::memory_order_release);
             KP_BT_TRACE_DEBUG(TraceKind::JobComplete, static_cast<uint32>(progress()));
             return;
         }
+        if (result == EncodeResult::Error) {
+            fail_print();
+            return;
+        }
     }
     const usize frame_limit = rfcomm_mtu_ == 0 ? 512 : rfcomm_mtu_;
     const usize chunk = std::min(frame_limit, tx_length_ - tx_offset_);
-    if (rfcomm_send(rfcomm_cid_, band_buffer_.data() + tx_offset_, static_cast<uint16>(chunk)) != ERROR_CODE_SUCCESS) {
+    if (rfcomm_send(rfcomm_cid_, tx_buffer_.data() + tx_offset_, static_cast<uint16>(chunk)) != ERROR_CODE_SUCCESS) {
         fail_print_link();
         return;
     }

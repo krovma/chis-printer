@@ -20,6 +20,7 @@ bool draw_m13_receive(bool countdown, uint32 remaining_us, bool awaiting_cut, bo
 bool draw_paired_badge();
 bool draw_file_list(const Storage::GbrCatalog& catalog, usize selection, bool bluetooth = false);
 bool draw_printing(usize sent, usize total, bool can_cancel = false);
+bool draw_label_warning(usize content_dots, usize label_dots, bool interactive);
 bool draw_block_indicator(usize index, usize count);
 bool draw_error(std::string_view message);
 

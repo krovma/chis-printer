@@ -18,15 +18,18 @@ extern CVar<uint32> auto_cut_time_limit_us;
 extern CVar<uint32> simulated_print_time_us;
 extern CVar<uint8> rx_sample_delay_us;
 extern CVar<PrinterType> printer_type;
+extern CVar<PaperType> paper_type;
+extern CVar<PrintProtocol> print_protocol;
+extern CVar<CenteringMode> centering;
+extern CVar<uint16> label_length_mm;
 
-// These are stored and reloaded through the same manager, but are not on the LCD panel.
+// Bluetooth connection and paper details stored in TOML.
 extern CVar<std::array<char, 32>> printer_name;
 extern CVar<std::array<char, 8>> pin;
-extern CVar<uint16> printable_width_58mm;
-extern CVar<uint8> image_scale_58mm;
-extern CVar<uint16> printable_width_80mm;
-extern CVar<uint8> image_scale_80mm;
+extern CVar<uint16> label_gap_mm;
 
 M3Config current_m3_config();
+bool set_m3_image_scale(uint8 scale_quarters, WriteMode mode);
+bool set_m3_left_margin_dots(uint16 dots, WriteMode mode);
 
 }  // namespace Config::Vars

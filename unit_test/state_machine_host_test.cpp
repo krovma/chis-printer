@@ -64,8 +64,16 @@ int main() {
     assert(state.m3_page() == M3Page::Files);
     state.m3_files_ready(1);
     assert(state.on_key(Key::Confirm, false, false, true) == Action::OpenFile);
-    state.file_opened(1);
+    state.file_opened(2);
+    assert(state.on_key(Key::Down, false, false, true) == Action::NextBlock);
+    assert(state.selected_block() == 1);
     assert(state.on_key(Key::Confirm, false, false, true) == Action::StartPrint);
+    state.label_warning();
+    assert(state.on_key(Key::Confirm, false, false, true) == Action::ContinueLabelPrint);
+    assert(state.on_key(Key::Left, false, false, true) == Action::CancelLabelPrint);
+    state.label_warning_cancelled();
+    assert(state.m2_page() == M2Page::Preview);
+    assert(state.selected_block() == 1);
     state.print_started();
     assert(state.on_key(Key::Left, false, false, true) == Action::CancelM3Print);
     state.m3_connection_lost();
@@ -134,4 +142,22 @@ int main() {
     assert(settings.on_key(Key::Left, false, false, false) == Action::ExitSettings);
     settings.exit_settings();
     assert(settings.mode() == Mode::Menu);
+
+    StateMachine margins;
+    margins.enter_settings();
+    for (int index = 0; index < static_cast<int>(Setting::Centering); ++index) {
+        assert(margins.on_key(Key::Down, false, false, false) == Action::Redraw);
+    }
+    assert(margins.setting_selection() == Setting::Centering);
+    assert(margins.on_key(Key::Down, false, false, false) == Action::Redraw);
+    assert(margins.setting_selection() == Setting::PaperType);
+    assert(margins.on_key(Key::Up, false, false, false, true) == Action::Redraw);
+    assert(margins.setting_selection() == Setting::LeftMargin);
+    assert(margins.on_key(Key::Confirm, false, false, false, true) == Action::BeginSetting);
+    assert(margins.on_key(Key::Right, false, false, false, true) == Action::ResetLeftMargin);
+    assert(margins.on_key(Key::Left, false, false, false, true) == Action::CancelSetting);
+    assert(margins.on_key(Key::Right, false, false, false, true) == Action::BeginAndResetLeftMargin);
+    assert(margins.on_key(Key::Confirm, false, false, false, true) == Action::SaveSetting);
+    margins.setting_saved();
+    assert(!margins.setting_editing());
 }

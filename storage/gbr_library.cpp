@@ -117,6 +117,8 @@ void GbrImage::clear() {
     size_ = 0;
     capacity_ = 0;
     total_size_ = 0;
+    source_rows_ = 0;
+    inner_margin_rows_ = 0;
     block_count_ = 0;
     block_index_ = 0;
     first_block_offset_ = 0;
@@ -207,6 +209,7 @@ bool GbrImage::load(const char* filename) {
         block_count_ = prefix[5];
         first_block_offset_ = Gbr::Format::GBR_FILE_HEADER_SIZE;
         valid = block_count_ != 0;
+        uint8 previous_after_margin = 0;
         for (usize index = 0; valid && index < block_count_; ++index) {
             std::array<uint8, Gbr::Format::GBR_BLOCK_HEADER_SIZE> header{};
             valid = read_exact(file_, header.data(), header.size());
@@ -214,6 +217,14 @@ bool GbrImage::load(const char* filename) {
             const FSIZE_t next = file_.fptr + payload_size;
             valid = payload_size != 0 && next <= f_size(&file_) && f_lseek(&file_, next) == FR_OK;
             total_size_ += payload_size;
+            if (valid) {
+                source_rows_ += payload_size / (Gbr::Format::GBR_WIDTH / 4);
+                const uint8 margins = header[5];
+                if (index != 0) {
+                    inner_margin_rows_ += static_cast<usize>(previous_after_margin + (margins >> 4)) * 8;
+                }
+                previous_after_margin = margins & 0x0f;
+            }
         }
         valid = valid && file_.fptr == f_size(&file_) &&
                 f_lseek(&file_, first_block_offset_) == FR_OK && read_block();
@@ -236,6 +247,7 @@ bool GbrImage::load(const char* filename) {
                 read_payload(payload_size);
         if (valid) {
             total_size_ = payload_size;
+            source_rows_ = payload_size / (Gbr::Format::GBR_WIDTH / 4);
             for (usize i = 0; i < print_control_.size(); ++i) {
                 print_control_[i] = header[4 + i];
             }

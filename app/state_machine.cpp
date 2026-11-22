@@ -7,7 +7,7 @@
 namespace App {
 
 Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_preview,
-                            const bool m3_connected) {
+                            const bool m3_connected, const bool firmware_centering) {
     switch (mode_) {
         case Mode::Menu:
             if (menu_page_ == MenuPage::Error) {
@@ -49,19 +49,29 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 }
                 if (key == Key::Up) return Action::IncreaseSetting;
                 if (key == Key::Down) return Action::DecreaseSetting;
+                if (key == Key::Right && setting_selection() == Setting::LeftMargin) return Action::ResetLeftMargin;
                 if (key == Key::Confirm) return Action::SaveSetting;
                 return Action::None;
             }
             if (key == Key::Left) return Action::ExitSettings;
-            if (key == Key::Up && setting_selection_ > 0) {
-                --setting_selection_;
-                return Action::Redraw;
+            if (key == Key::Up || key == Key::Down) {
+                const int direction = key == Key::Up ? -1 : 1;
+                int next = static_cast<int>(setting_selection_) + direction;
+                while (next >= 0 && next < static_cast<int>(Setting::Count) &&
+                       !setting_visible(static_cast<Setting>(next), firmware_centering)) {
+                    next += direction;
+                }
+                if (next >= 0 && next < static_cast<int>(Setting::Count)) {
+                    setting_selection_ = static_cast<uint8>(next);
+                    return Action::Redraw;
+                }
             }
-            if (key == Key::Down && setting_selection_ + 1 < static_cast<uint8>(Setting::Count)) {
-                ++setting_selection_;
-                return Action::Redraw;
+            if (key == Key::Right && setting_selection() == Setting::LeftMargin && firmware_centering) {
+                setting_editing_ = true;
+                return Action::BeginAndResetLeftMargin;
             }
             if (key == Key::Confirm) {
+                if (!setting_visible(setting_selection(), firmware_centering)) return Action::None;
                 setting_editing_ = true;
                 return Action::BeginSetting;
             }
@@ -176,6 +186,10 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                     return Action::None;
                 case M2Page::Printing:
                     return mode_ == Mode::M3 && key == Key::Left ? Action::CancelM3Print : Action::None;
+                case M2Page::LabelWarning:
+                    if (key == Key::Confirm) return Action::ContinueLabelPrint;
+                    if (key == Key::Left) return Action::CancelLabelPrint;
+                    return Action::None;
                 case M2Page::Error:
                     return key == Key::Left || key == Key::Confirm ? Action::CloseFile : Action::None;
             }
@@ -260,6 +274,8 @@ void StateMachine::file_opened(const usize block_count) {
 void StateMachine::file_failed() { m2_page_ = M2Page::Error; }
 void StateMachine::file_closed() { m2_page_ = M2Page::List; }
 void StateMachine::print_started() { m2_page_ = M2Page::Printing; }
+void StateMachine::label_warning() { m2_page_ = M2Page::LabelWarning; }
+void StateMachine::label_warning_cancelled() { m2_page_ = M2Page::Preview; }
 void StateMachine::print_finished(const bool success) { m2_page_ = success ? M2Page::List : M2Page::Error; }
 
 }  // namespace App

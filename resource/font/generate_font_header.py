@@ -142,7 +142,7 @@ def generate(font_path: Path, text_header: Path, output: Path, threshold: int) -
         glyph_names.append((codepoint, name, width))
         lines.extend(
             [
-                f"inline constexpr uint8 {name}_ROWS[] = {{",
+                f"inline constexpr uint8 {name}_ROWS[] = {{ /* {chr(codepoint)} */",
                 cpp_array(data),
                 "};",
                 "",

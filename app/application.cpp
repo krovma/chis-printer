@@ -22,6 +22,7 @@
 #include "app/settings.h"
 #include "app/state_machine.h"
 #include "btprinter/bluetooth_printer.h"
+#include "btprinter/print_layout.h"
 #include "config/variables.h"
 #include "display/ui/screen.h"
 #include "display/ui/text.h"
@@ -278,7 +279,13 @@ class Application {
                 Display::set_backlight(static_cast<float>(Config::Vars::backlight_percent.get()));
                 break;
             case Setting::PrinterType:
-                if (bt_printer_.initialized()) bt_printer_.set_printer_type(Config::Vars::printer_type.get());
+            case Setting::ImageScale:
+            case Setting::Centering:
+            case Setting::LeftMargin:
+            case Setting::PaperType:
+            case Setting::LabelLength:
+            case Setting::Protocol:
+                if (bt_printer_.initialized()) bt_printer_.set_config(Config::Vars::current_m3_config());
                 break;
             default: break;
         }
@@ -303,6 +310,17 @@ class Application {
         const uint32 next = stepped_setting_value(setting, setting_value(setting), delta);
         if (!set_setting_value(setting, next, Config::WriteMode::RuntimeOnly)) return;
         preview_setting(setting);
+        settings_error_ = {};
+        dirty_ = true;
+    }
+
+    void reset_left_margin() {
+        if (state_.setting_selection() != Setting::LeftMargin) return;
+        const auto advance = Config::Vars::current_m3_config().resolved_advance();
+        const uint32 centered_dots = Config::default_left_margin_dots(advance.printable_width_dots,
+                                                                       advance.image_scale_quarters);
+        if (!set_setting_value(Setting::LeftMargin, centered_dots, Config::WriteMode::RuntimeOnly)) return;
+        preview_setting(Setting::LeftMargin);
         settings_error_ = {};
         dirty_ = true;
     }
@@ -432,6 +450,53 @@ class Application {
         state_.enter_m13();
         drawn_connection_state_ = bt_printer_.connection_state();
         dirty_ = true;
+    }
+
+    bool prepare_bt_layout() {
+        label_layout_ = {};
+        if (Config::Vars::paper_type.get() != Config::PaperType::Label) return true;
+        label_layout_ = BtPrinter::layout_label(image_.source_rows(), image_.inner_margin_rows(),
+                                                Config::Vars::current_m3_config().resolved_advance().image_scale_quarters,
+                                                Config::Vars::label_length_mm.get());
+        return !label_layout_.overflow;
+    }
+
+    bool start_bt_block(const bool first, const usize previous_after_rows = 0) {
+        const bool last = image_.block_index() + 1 == image_.block_count();
+        const uint8 scale_quarters = Config::Vars::current_m3_config().resolved_advance().image_scale_quarters;
+        const usize current_before_rows = static_cast<usize>(image_.print_control()[1] >> 4) * 8;
+        const usize current_after_rows = static_cast<usize>(image_.print_control()[1] & 0x0f) * 8;
+        // Keep GBR margins on roll paper; label paper replaces only the outer margins.
+        usize before_dots = Config::scaled_dots(previous_after_rows + current_before_rows, scale_quarters);
+        usize after_dots = last ? Config::scaled_dots(current_after_rows, scale_quarters) : 0;
+        if (Config::Vars::paper_type.get() == Config::PaperType::Label) {
+            before_dots = first ? label_layout_.top_dots :
+                Config::scaled_dots(previous_after_rows + current_before_rows, scale_quarters);
+            after_dots = last ? label_layout_.bottom_dots +
+                BtPrinter::label_length_dots(Config::Vars::label_gap_mm.get()) : 0;
+        }
+        return bt_printer_.start(image_.data(), image_.size(), image_.palette(),
+                                 first, last, before_dots, after_dots);
+    }
+
+    bool select_first_print_block() {
+        if (image_.select_block(0)) return true;
+        printf("ERROR: GBR first block read failed\n");
+        image_.clear();
+        error_text_ = "GBR error";
+        state_.file_failed();
+        return false;
+    }
+
+    void start_m3_print() {
+        if (!select_first_print_block()) return;
+        if (start_bt_block(true)) {
+            state_.print_started();
+            drawn_print_progress_ = 0;
+        } else {
+            error_text_ = "BT print error";
+            state_.print_finished(false);
+        }
     }
 
     void enter_m13_receive() {
@@ -587,14 +652,14 @@ class Application {
                         finish_m13_print(false);
                         return;
                     }
+                    const usize previous_after_rows = static_cast<usize>(image_.print_control()[1] & 0x0f) * 8;
                     if (!image_.next_block()) {
                         m13_error_ = "GBR read error";
                         printf("ERROR: M1+3 next GBR block read failed\n");
                         finish_m13_print(false);
                         return;
                     }
-                    if (bt_printer_.start(image_.data(), image_.size(), image_.palette(), false,
-                                          image_.block_index() + 1 == image_.block_count())) {
+                    if (start_bt_block(false, previous_after_rows)) {
                         printf("M1+3 BT block %lu/%lu\n",
                                static_cast<unsigned long>(image_.block_index() + 1),
                                static_cast<unsigned long>(image_.block_count()));
@@ -640,7 +705,15 @@ class Application {
                 finish_m13_print(false);
                 return;
             }
-            if (!bt_printer_.start(image_.data(), image_.size(), image_.palette(), true, image_.block_count() == 1)) {
+            if (!prepare_bt_layout()) {
+                printf("M1+3 label content too long: %lu/%lu dots; GBR saved as %s\n",
+                       static_cast<unsigned long>(label_layout_.content_dots),
+                       static_cast<unsigned long>(label_layout_.label_dots), filename);
+                m13_error_ = "Label too long";
+                finish_m13_print(false);
+                return;
+            }
+            if (!start_bt_block(true)) {
                 printf("ERROR: M1+3 could not start BT print for %s\n", filename);
                 m13_error_ = "BT print error";
                 finish_m13_print(false);
@@ -739,8 +812,8 @@ class Application {
         }
         if (status == BtPrinter::PrintStatus::Success) {
             if (image_.block_index() + 1 < image_.block_count()) {
-                if (image_.next_block() && bt_printer_.start(image_.data(), image_.size(), image_.palette(), false,
-                                                             image_.block_index() + 1 == image_.block_count())) {
+                const usize previous_after_rows = static_cast<usize>(image_.print_control()[1] & 0x0f) * 8;
+                if (image_.next_block() && start_bt_block(false, previous_after_rows)) {
                     dirty_ = true;
                     return;
                 }
@@ -766,7 +839,8 @@ class Application {
         const auto snapshot = m1_ ? m1_->snapshot() : Gbp::Terminal::M1State::Snapshot{};
         const Action action = state_.on_key(key, snapshot.view == Gbp::Terminal::ViewState::Waiting,
                                             snapshot.view == Gbp::Terminal::ViewState::Preview,
-                                            bt_printer_.connected());
+                                            bt_printer_.connected(),
+                                            Config::Vars::centering.get() == Config::CenteringMode::Firmware);
         switch (action) {
             case Action::None: break;
             case Action::Redraw: dirty_ = true; break;
@@ -789,9 +863,14 @@ class Application {
                 dirty_ = true;
                 break;
             case Action::BeginSetting: begin_setting(); break;
+            case Action::BeginAndResetLeftMargin:
+                begin_setting();
+                reset_left_margin();
+                break;
             case Action::CancelSetting: cancel_setting(); break;
             case Action::DecreaseSetting: adjust_setting(-1); break;
             case Action::IncreaseSetting: adjust_setting(1); break;
+            case Action::ResetLeftMargin: reset_left_margin(); break;
             case Action::SaveSetting: save_setting(); break;
             case Action::EnterM13Receive: enter_m13_receive(); break;
             case Action::ExitM13Receive:
@@ -870,34 +949,33 @@ class Application {
                 dirty_ = true;
                 break;
             case Action::StartPrint:
-                if (state_.mode() == Mode::M2) {
+                if (state_.mode() == Mode::M3) {
+                    if (prepare_bt_layout()) {
+                        start_m3_print();
+                    } else {
+                        state_.label_warning();
+                    }
+                    dirty_ = true;
+                } else {
                     ensure_worker_started();
-                }
-                if (state_.mode() == Mode::M3 || worker.mode() == Gbp::Terminal::Worker::Mode::Idle) {
-                    if (image_.select_block(0)) {
-                        if (state_.mode() == Mode::M3) {
-                            if (bt_printer_.start(image_.data(), image_.size(), image_.palette(), true,
-                                                  image_.block_count() == 1)) {
-                                state_.print_started();
-                                drawn_print_progress_ = 0;
-                            } else {
-                                error_text_ = "BT print error";
-                                state_.print_finished(false);
-                            }
-                        } else {
+                    if (worker.mode() == Gbp::Terminal::Worker::Mode::Idle) {
+                        if (select_first_print_block()) {
                             printed_bytes_ = 0;
                             start_m2_block();
                             state_.print_started();
                             drawn_print_progress_ = 0;
                         }
-                    } else {
-                        printf("ERROR: GBR first block read failed\n");
-                        image_.clear();
-                        error_text_ = "GBR error";
-                        state_.file_failed();
+                        dirty_ = true;
                     }
-                    dirty_ = true;
                 }
+                break;
+            case Action::ContinueLabelPrint:
+                start_m3_print();
+                dirty_ = true;
+                break;
+            case Action::CancelLabelPrint:
+                state_.label_warning_cancelled();
+                dirty_ = true;
                 break;
             case Action::CancelM3Print:
                 bt_printer_.disconnect();
@@ -944,6 +1022,7 @@ class Application {
                         return Screen::draw_block_indicator(image_.block_index(), image_.block_count());
                     case M2Page::Printing:
                         return Screen::draw_printing(printed_bytes_ + worker.print_progress(), image_.total_size());
+                    case M2Page::LabelWarning: return false;
                     case M2Page::Error: return Screen::draw_error(error_text_);
                 }
             case Mode::M3:
@@ -971,6 +1050,9 @@ class Application {
                                 return Screen::draw_block_indicator(image_.block_index(), image_.block_count());
                             case M2Page::Printing:
                                 return Screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
+                            case M2Page::LabelWarning:
+                                return Screen::draw_label_warning(label_layout_.content_dots,
+                                                                  label_layout_.label_dots, true);
                             case M2Page::Error: return Screen::draw_error(error_text_);
                         }
                     case M3Page::Receive:
@@ -1051,6 +1133,7 @@ class Application {
     Storage::GbrStore store_{};
     Storage::GbrCatalog catalog_{};
     Storage::GbrImage image_{};
+    BtPrinter::LabelLayout label_layout_{};
     std::unique_ptr<Gbp::Terminal::M1State> m1_{};
     Gbp::Terminal::M1State::Frame active_frame_{};
     Gbp::Terminal::M1State::Snapshot drawn_m1_{};

@@ -38,16 +38,14 @@ const char* trace_kind_name(TraceKind kind);
 class BluetoothPrinter {
   public:
     bool initialize(const Config::M3Config& config);
-    void set_printer_type(Config::PrinterType type) {
-        image_scale_ = Config::default_m3_advance(type).image_scale;
-    }
+    bool set_config(const Config::M3Config& config);
     bool connect(bool forget_link_key);
     void disconnect();
     void service();
-    // Consecutive GBR blocks share one ESC/POS image stream. Only the first
-    // block initializes the printer, and only the last block feeds the paper.
+    // Consecutive GBR blocks share a print job, with optional feed between blocks.
     bool start(const uint8* image, usize size, uint8 palette,
-               bool first_block, bool last_block);
+               bool first_block, bool last_block,
+               usize before_feed_dots = 0, usize after_feed_dots = 0);
 
     bool initialized() const { return initialized_.load(std::memory_order_acquire); }
     bool hci_ready() const { return hci_ready_.load(std::memory_order_acquire); }
@@ -74,7 +72,7 @@ class BluetoothPrinter {
     void select_discovered_address(const uint8* address);
     void query_next_remote_name();
     void close_link();
-    void send_next_band();
+    void send_next_chunk();
     bool request_can_send_now();
     void fail_connection();
     void fail_print();
@@ -94,7 +92,11 @@ class BluetoothPrinter {
     bool address_known_ = false;
     std::array<char, 32> printer_name_{};
     std::array<char, 8> pin_{};
-    uint8 image_scale_ = DEFAULT_IMAGE_SCALE;
+    uint8 image_scale_quarters_ = DEFAULT_IMAGE_SCALE_QUARTERS;
+    uint16 printable_width_dots_ = 0;
+    uint16 left_margin_dots_ = 0;
+    Config::PaperType paper_type_ = Config::PaperType::Roll;
+    Config::CenteringMode centering_ = Config::CenteringMode::Printer;
     std::atomic<PrintStatus> status_{PrintStatus::Disabled};
     std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
     std::atomic_bool connected_{false};
@@ -118,8 +120,6 @@ class BluetoothPrinter {
     bool rfcomm_open_pending_ = false;
     bool disconnect_pending_ = false;
     uint64 connect_started_ms_ = 0;
-    bool header_sent_ = false;
-    bool footer_sent_ = false;
     bool printer_flow_paused_ = false;
     bool link_key_retry_done_ = false;
     bool query_pending_ = false;
@@ -133,7 +133,8 @@ class BluetoothPrinter {
     usize tx_length_ = 0;
     usize tx_offset_ = 0;
     EscPosRasterEncoder encoder_{};
-    std::array<uint8, MAX_BAND_BYTES> band_buffer_{};
+    PrintCommandEncoder* command_encoder_ = &encoder_;
+    std::array<uint8, MAX_BAND_BYTES> tx_buffer_{};
 };
 
 }  // namespace BtPrinter

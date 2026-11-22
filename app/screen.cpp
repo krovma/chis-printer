@@ -3,11 +3,14 @@
 
 #include "app/screen.h"
 
+#include <array>
 #include <cstdio>
 #include <string>
 
 #include "types.h"
 #include "app/settings.h"
+#include "config/printer_config.h"
+#include "config/variables.h"
 #include "display/ui/text.h"
 #include "display/zjy154s0800.h"
 
@@ -68,7 +71,28 @@ bool draw_setting_value(const Setting setting, const uint32 current,
             std::snprintf(value, sizeof(value), "%u us", static_cast<unsigned>(current));
             break;
         case Setting::PrinterType:
-            std::snprintf(value, sizeof(value), "%s", current == 1 ? "80mm" : "58mm");
+            return current < Config::PRINTER_TYPE_COUNT &&
+                   Display::Ui::draw_utf8(Config::PRINTER_TYPE_NAMES[current], x, y, BLACK);
+        case Setting::ImageScale:
+            if (current == Config::SCALE_1_5X) {
+                std::snprintf(value, sizeof(value), "1.5X");
+            } else {
+                std::snprintf(value, sizeof(value), "%uX", static_cast<unsigned>(current / Config::SCALE_UNIT));
+            }
+            break;
+        case Setting::Centering:
+            return Display::Ui::draw_key(current == static_cast<uint32>(Config::CenteringMode::Firmware) ?
+                                            "centering_firmware" : "centering_printer", x, y, BLACK);
+        case Setting::LeftMargin:
+            std::snprintf(value, sizeof(value), "%u dot", static_cast<unsigned>(current));
+            break;
+        case Setting::PaperType:
+            return Display::Ui::draw_key(current == 1 ? "paper_label" : "paper_roll", x, y, BLACK);
+        case Setting::LabelLength:
+            std::snprintf(value, sizeof(value), "%u mm", static_cast<unsigned>(current));
+            break;
+        case Setting::Protocol:
+            std::snprintf(value, sizeof(value), "ESC/POS");
             break;
         case Setting::Count:
             return false;
@@ -109,18 +133,37 @@ bool draw_settings(const Setting selection, const bool editing,
                    const std::string_view error) {
     constexpr std::string_view labels[]{"setting_locale", "setting_palette", "setting_backlight",
                                         "setting_auto_cut", "setting_print_time", "setting_rx_delay",
-                                        "setting_printer_type"};
+                                        "setting_printer_type", "setting_image_scale", "setting_centering",
+                                        "setting_left_margin", "setting_paper_type", "setting_label_length",
+                                        "setting_protocol"};
+    static_assert(sizeof(labels) / sizeof(*labels) == static_cast<usize>(Setting::Count));
     Display::clear(WHITE);
     if (!centered("settings", 12)) return false;
-    for (uint8 row = 0; row < static_cast<uint8>(Setting::Count); ++row) {
-        const auto item = static_cast<Setting>(row);
+    constexpr uint8 visible_rows = 7;
+    const bool firmware_centering = Config::Vars::centering.get() == Config::CenteringMode::Firmware;
+    std::array<Setting, static_cast<usize>(Setting::Count)> visible{};
+    uint8 count = 0;
+    uint8 selected = 0;
+    for (uint8 index = 0; index < static_cast<uint8>(Setting::Count); ++index) {
+        const auto item = static_cast<Setting>(index);
+        if (!setting_visible(item, firmware_centering)) continue;
+        if (item == selection) selected = count;
+        visible[count++] = item;
+    }
+    // Show the effective scale alongside the paper width while it is being changed.
+    const uint8 last = selection == Setting::PrinterType ? selected + 1 : selected;
+    const uint8 first = last < visible_rows ? 0 : last - visible_rows + 1;
+    for (uint8 row = 0; row < visible_rows && first + row < count; ++row) {
+        const auto item = visible[first + row];
         const int16 y = static_cast<int16>(38 + row * 24);
         if (!Display::Ui::draw_utf8(selection == item ? ">" : " ", 4, y, BLACK) ||
-            !Display::Ui::draw_key(labels[row], 25, y, BLACK) ||
+            !Display::Ui::draw_key(labels[static_cast<uint8>(item)], 25, y, BLACK) ||
             !draw_setting_value(item, setting_value(item), 155, y)) return false;
     }
     if (editing) {
-        return centered(error.empty() ? "settings_adjust_hint" : error, 204) &&
+        const std::string_view hint = selection == Setting::LeftMargin ? "settings_margin_hint" :
+            "settings_adjust_hint";
+        return centered(error.empty() ? hint : error, 204) &&
                centered("settings_save_hint", 221);
     }
     return centered("settings_edit_hint", 218);
@@ -212,6 +255,16 @@ bool draw_printing(const usize sent, const usize total, const bool can_cancel) {
                   static_cast<unsigned long>(total == 0 ? 0 : sent * 100 / total));
     return centered("Printing", 97) && centered(progress, 130) &&
            (!can_cancel || centered("Left cancel", 177));
+}
+
+bool draw_label_warning(const usize content_dots, const usize label_dots, const bool interactive) {
+    Display::clear(WHITE);
+    char dimensions[32]{};
+    const unsigned long content_mm = static_cast<unsigned long>((content_dots * 254 + 2029) / 2030);
+    const unsigned long label_mm = static_cast<unsigned long>((label_dots * 254 + 1015) / 2030);
+    std::snprintf(dimensions, sizeof(dimensions), "%lu > %lu mm", content_mm, label_mm);
+    return centered("Label too long", 73) && centered(dimensions, 109) &&
+           (!interactive || (centered("OK continue", 160) && centered("Left cancel", 191)));
 }
 
 bool draw_block_indicator(const usize index, const usize count) {

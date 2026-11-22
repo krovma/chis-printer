@@ -116,8 +116,12 @@ add_executable(kuper-printer
     app/state_machine.h
     btprinter/bluetooth_printer.cpp
     btprinter/bluetooth_printer.h
+    btprinter/dither.cpp
+    btprinter/dither.h
     btprinter/escpos.cpp
     btprinter/escpos.h
+    btprinter/print_layout.h
+    btprinter/protocol.h
     btstack_config.h
     config/cvar.cpp
     config/cvar.h
