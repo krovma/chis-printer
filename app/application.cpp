@@ -169,6 +169,7 @@ class Application {
         absolute_time_t next_m3_report = make_timeout_time_ms(2000);
 #endif
         while (true) {
+            // Keep servicing the Bluetooth link across mode changes.
             if (bt_printer_.initialized()) {
                 cyw43_arch_poll();
                 bt_printer_.service();
@@ -277,15 +278,6 @@ class Application {
             case Setting::Palette: Display::set_palette_key(Config::Vars::palette.get()); break;
             case Setting::Backlight:
                 Display::set_backlight(static_cast<float>(Config::Vars::backlight_percent.get()));
-                break;
-            case Setting::PrinterType:
-            case Setting::ImageScale:
-            case Setting::Centering:
-            case Setting::LeftMargin:
-            case Setting::PaperType:
-            case Setting::LabelLength:
-            case Setting::Protocol:
-                if (bt_printer_.initialized()) bt_printer_.set_config(Config::Vars::current_m3_config());
                 break;
             default: break;
         }
@@ -417,38 +409,46 @@ class Application {
         dirty_ = true;
     }
 
-    void enter_m3() {
+    void enter_bluetooth_mode(const Mode mode) {
+        const bool m13 = mode == Mode::M13;
+        const char* mode_name = m13 ? "M1+3" : "M3";
+        const auto config = Config::Vars::current_m3_config();
+        if (!bt_printer_.allocate_print_buffers(config)) {
+            menu_error_ = m13 ? "M1+3 error" : "BT print error";
+            state_.menu_failed();
+            dirty_ = true;
+            return;
+        }
 #if defined(KP_BT_DEBUG)
-        printf("M3 enter t=%lu ms\n", static_cast<unsigned long>(time_us_32() / 1000u));
-        printf("M3 enter: bluetooth init begin\n");
+        printf("%s enter t=%lu ms: bluetooth init begin\n", mode_name,
+               static_cast<unsigned long>(time_us_32() / 1000u));
 #endif
-        const bool bluetooth_ok = bt_printer_.initialize(Config::Vars::current_m3_config());
+        const bool bluetooth_ok = bt_printer_.initialize(config);
 #if defined(KP_BT_DEBUG)
-        printf("M3 enter: bluetooth init done ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
+        printf("%s enter: bluetooth init done ok=%u hci=%u\n", mode_name, bluetooth_ok ? 1u : 0u,
                bt_printer_.hci_ready() ? 1u : 0u);
 #endif
         if (!bluetooth_ok) {
-            printf("ERROR: M3 Bluetooth init failed\n");
+            printf("ERROR: %s Bluetooth init failed\n", mode_name);
         }
-        state_.enter_m3();
+        if (m13) {
+            state_.enter_m13();
+        } else {
+            state_.enter_m3();
+        }
         drawn_connection_state_ = bt_printer_.connection_state();
         dirty_ = true;
-#if defined(KP_BT_DEBUG)
-        printf("M3 enter: state ready page=%u\n", static_cast<unsigned>(state_.m3_page()));
-#endif
     }
 
-    void enter_m13() {
-        const bool bluetooth_ok = bt_printer_.initialize(Config::Vars::current_m3_config());
-#if defined(KP_BT_DEBUG)
-        printf("M1+3 enter: bluetooth init ok=%u hci=%u\n", bluetooth_ok ? 1u : 0u,
-               bt_printer_.hci_ready() ? 1u : 0u);
-#endif
-        if (!bluetooth_ok) {
-            printf("ERROR: M1+3 Bluetooth init failed\n");
+    void exit_bluetooth_mode() {
+        bt_printer_.release_print_buffers();
+        image_.clear();
+        catalog_.clear();
+        if (state_.mode() == Mode::M13) {
+            state_.exit_m13();
+        } else {
+            state_.exit_m3();
         }
-        state_.enter_m13();
-        drawn_connection_state_ = bt_printer_.connection_state();
         dirty_ = true;
     }
 
@@ -502,9 +502,8 @@ class Application {
     void enter_m13_receive() {
         if (!storage_ready_) {
             menu_error_ = "SD CARD ERROR";
-            state_.exit_m13();
+            exit_bluetooth_mode();
             state_.menu_failed();
-            dirty_ = true;
             return;
         }
         std::unique_ptr<Gbp::Terminal::M1State> next{
@@ -512,9 +511,8 @@ class Application {
         if (!next) {
             printf("ERROR: M1+3 buffer allocation failed\n");
             menu_error_ = "M1+3 error";
-            state_.exit_m13();
+            exit_bluetooth_mode();
             state_.menu_failed();
-            dirty_ = true;
             return;
         }
         m1_ = std::move(next);
@@ -852,8 +850,8 @@ class Application {
                 worker.stop_receive();
                 break;
             case Action::EnterM2: enter_m2(); break;
-            case Action::EnterM3: enter_m3(); break;
-            case Action::EnterM13: enter_m13(); break;
+            case Action::EnterM3: enter_bluetooth_mode(Mode::M3); break;
+            case Action::EnterM13: enter_bluetooth_mode(Mode::M13); break;
             case Action::EnterSettings:
                 state_.enter_settings();
                 dirty_ = true;
@@ -884,16 +882,8 @@ class Application {
                 dirty_ = true;
                 break;
             case Action::ExitM3:
-                bt_printer_.disconnect();
-                image_.clear();
-                catalog_.clear();
-                state_.exit_m3();
-                dirty_ = true;
-                break;
             case Action::ExitM13:
-                bt_printer_.disconnect();
-                state_.exit_m13();
-                dirty_ = true;
+                exit_bluetooth_mode();
                 break;
             case Action::PairM3:
                 bt_printer_.connect(true);
@@ -1167,8 +1157,7 @@ class Application {
 }  // namespace
 
 void run(const bool card_mounted) {
-    // The M3 raster and BT buffers are large enough to keep the application
-    // object out of core 0's limited call stack.
+    // Keep application state out of Core 0's limited call stack.
     static Application application(card_mounted);
     application.run();
 }

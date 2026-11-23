@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <new>
+#include <utility>
 
 #include "types.h"
 #include "btstack.h"
@@ -77,12 +79,21 @@ bool BluetoothPrinter::pop_trace(TraceEvent& event) {
     return true;
 }
 
-bool BluetoothPrinter::set_config(const Config::M3Config& config) {
-    const Config::M3AdvanceConfig settings = config.resolved_advance();
-    PrintCommandEncoder* strategy = protocol_encoder(config.protocol, encoder_);
+bool BluetoothPrinter::allocate_print_buffers(const Config::M3Config& config) {
+    if (print_buffers_) {
+        return true;
+    }
+    const auto settings = config.resolved_advance();
+    std::unique_ptr<PrintBuffers> buffers{
+        new (std::nothrow) PrintBuffers{settings, config.paper_type, config.centering}};
+    if (!buffers) {
+        std::printf("ERROR: M3 BT print buffer allocation failed\n");
+        return false;
+    }
+    buffers->encoder = protocol_encoder(config.protocol, buffers->escpos);
     if (!Config::printer_type_supports_scale(config.printer_type, settings.image_scale_quarters) ||
         settings.printable_width_dots < Config::scaled_dots(SOURCE_WIDTH, settings.image_scale_quarters) ||
-        strategy == nullptr ||
+        buffers->encoder == nullptr ||
         config.label_length_mm == 0 || config.label_length_mm > Config::MAX_LABEL_LENGTH_MM ||
         config.label_gap_mm > Config::MAX_LABEL_GAP_MM ||
         (config.centering != Config::CenteringMode::Printer &&
@@ -92,20 +103,27 @@ bool BluetoothPrinter::set_config(const Config::M3Config& config) {
                     static_cast<unsigned>(config.printer_type),
                     static_cast<unsigned>(settings.printable_width_dots),
                     static_cast<unsigned>(settings.image_scale_quarters));
-        connection_state_.store(ConnectionState::Error, std::memory_order_release);
         return false;
     }
-    image_scale_quarters_ = settings.image_scale_quarters;
-    printable_width_dots_ = settings.printable_width_dots;
-    left_margin_dots_ = settings.left_margin_dots;
-    paper_type_ = config.paper_type;
-    centering_ = config.centering;
-    command_encoder_ = strategy;
+    const bool active = initialized();
+    if (active) cyw43_arch_lwip_begin();
+    print_buffers_ = std::move(buffers);
+    if (active) cyw43_arch_lwip_end();
     return true;
 }
 
+void BluetoothPrinter::release_print_buffers() {
+    const bool active = initialized();
+    if (active) cyw43_arch_lwip_begin();
+    print_pending_.store(false, std::memory_order_release);
+    status_.store(active ? PrintStatus::Idle : PrintStatus::Disabled, std::memory_order_release);
+    progress_.store(0, std::memory_order_release);
+    total_.store(0, std::memory_order_release);
+    print_buffers_.reset();
+    if (active) cyw43_arch_lwip_end();
+}
+
 bool BluetoothPrinter::initialize(const Config::M3Config& config) {
-    if (!set_config(config)) return false;
     if (initialized_.load(std::memory_order_acquire)) {
         KP_BT_LOG_DEBUG("M3 BT init already ready t=%lu ms\n",
                         static_cast<unsigned long>(time_us_32() / 1000u));
@@ -296,27 +314,28 @@ bool BluetoothPrinter::start(const uint8* image, const usize size,
         return false;
     }
     cyw43_arch_lwip_begin();
-    if (!connected() || rfcomm_cid_ == 0 || status() == PrintStatus::Printing) {
+    auto* buffers = print_buffers_.get();
+    if (buffers == nullptr || !connected() || rfcomm_cid_ == 0 || status() == PrintStatus::Printing) {
         cyw43_arch_lwip_end();
         return false;
     }
-    if (!command_encoder_->reset({image, size, palette, image_scale_quarters_, first_block, last_block,
-                                   paper_type_, before_feed_dots, after_feed_dots,
-                                   printable_width_dots_, centering_, left_margin_dots_})) {
+    const auto& advance = buffers->advance;
+    if (!buffers->encoder->reset({image, size, palette, advance.image_scale_quarters, first_block, last_block,
+                                  buffers->paper, before_feed_dots, after_feed_dots,
+                                  advance.printable_width_dots, buffers->centering, advance.left_margin_dots})) {
         status_.store(PrintStatus::Error, std::memory_order_release);
         cyw43_arch_lwip_end();
         return false;
     }
-    printer_flow_paused_ = false;
-    tx_length_ = 0;
-    tx_offset_ = 0;
+    buffers->length = 0;
+    buffers->offset = 0;
     progress_.store(0, std::memory_order_release);
-    total_.store(command_encoder_->encoded_size(), std::memory_order_release);
+    total_.store(buffers->encoder->encoded_size(), std::memory_order_release);
     KP_BT_TRACE_DEBUG(TraceKind::JobStart, static_cast<uint32>(size),
                       static_cast<uint32>(total()));
     print_pending_.store(true, std::memory_order_release);
     status_.store(PrintStatus::Printing, std::memory_order_release);
-    const bool send_ready = request_can_send_now();
+    const bool send_ready = printer_flow_paused_ || request_can_send_now();
     cyw43_arch_lwip_end();
     return send_ready;
 }
@@ -337,9 +356,8 @@ void BluetoothPrinter::sdp_handler(const uint8 packet_type, const uint16 channel
 
 void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 channel,
                                      uint8* packet, const uint16 size) {
-    (void)channel;
     if (packet_type == RFCOMM_DATA_PACKET) {
-        if (size == 0 || packet == nullptr) {
+        if (!connected() || channel != rfcomm_cid_ || size == 0 || packet == nullptr) {
             return;
         }
         if (packet[0] == 0x08) {
@@ -354,7 +372,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
             if (print_pending_.load(std::memory_order_acquire) && rfcomm_cid_ != 0) {
                 request_can_send_now();
             }
-        } else if (packet[0] == 0x08) {
+        } else if (packet[0] == 0x08 && print_pending_.load(std::memory_order_acquire)) {
             fail_print();
         }
         return;
@@ -565,13 +583,16 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
         }
         connect_requested_.store(false, std::memory_order_release);
         forget_link_key_queued_ = false;
+        printer_flow_paused_ = false;
         connected_.store(true, std::memory_order_release);
         connection_state_.store(ConnectionState::Connected, std::memory_order_release);
         status_.store(PrintStatus::Idle, std::memory_order_release);
         return;
     }
     if (event == RFCOMM_EVENT_CAN_SEND_NOW) {
-        send_next_chunk();
+        if (rfcomm_event_can_send_now_get_rfcomm_cid(packet) == rfcomm_cid_) {
+            send_next_chunk();
+        }
         return;
     }
     if (event == RFCOMM_EVENT_CHANNEL_CLOSED) {
@@ -725,12 +746,14 @@ void BluetoothPrinter::query_next_remote_name() {
 }
 
 void BluetoothPrinter::send_next_chunk() {
-    if (rfcomm_cid_ == 0 || !print_pending_.load(std::memory_order_acquire) || printer_flow_paused_) {
+    auto* buffers = print_buffers_.get();
+    if (buffers == nullptr || rfcomm_cid_ == 0 || !print_pending_.load(std::memory_order_acquire) ||
+        printer_flow_paused_) {
         return;
     }
-    if (tx_offset_ == tx_length_) {
-        tx_offset_ = 0;
-        const auto result = command_encoder_->next_chunk(tx_buffer_.data(), tx_buffer_.size(), tx_length_);
+    if (buffers->offset == buffers->length) {
+        buffers->offset = 0;
+        const auto result = buffers->encoder->next_chunk(buffers->tx.data(), buffers->tx.size(), buffers->length);
         if (result == EncodeResult::Complete) {
             print_pending_.store(false, std::memory_order_release);
             status_.store(PrintStatus::Success, std::memory_order_release);
@@ -743,12 +766,13 @@ void BluetoothPrinter::send_next_chunk() {
         }
     }
     const usize frame_limit = rfcomm_mtu_ == 0 ? 512 : rfcomm_mtu_;
-    const usize chunk = std::min(frame_limit, tx_length_ - tx_offset_);
-    if (rfcomm_send(rfcomm_cid_, tx_buffer_.data() + tx_offset_, static_cast<uint16>(chunk)) != ERROR_CODE_SUCCESS) {
+    const usize chunk = std::min(frame_limit, buffers->length - buffers->offset);
+    if (rfcomm_send(rfcomm_cid_, buffers->tx.data() + buffers->offset, static_cast<uint16>(chunk)) !=
+        ERROR_CODE_SUCCESS) {
         fail_print_link();
         return;
     }
-    tx_offset_ += chunk;
+    buffers->offset += chunk;
     progress_.fetch_add(chunk, std::memory_order_acq_rel);
     request_can_send_now();
 }

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
 
 #include "types.h"
 #include "config/printer_config.h"
@@ -38,7 +39,9 @@ const char* trace_kind_name(TraceKind kind);
 class BluetoothPrinter {
   public:
     bool initialize(const Config::M3Config& config);
-    bool set_config(const Config::M3Config& config);
+    bool allocate_print_buffers(const Config::M3Config& config);
+    // Release the print workspace after the job has finished or been canceled.
+    void release_print_buffers();
     bool connect(bool forget_link_key);
     void disconnect();
     void service();
@@ -84,6 +87,16 @@ class BluetoothPrinter {
         uint8 page_scan_repetition_mode = 0;
         uint16 clock_offset = 0;
     };
+    struct PrintBuffers {
+        Config::M3AdvanceConfig advance;
+        Config::PaperType paper;
+        Config::CenteringMode centering;
+        EscPosRasterEncoder escpos{};
+        PrintCommandEncoder* encoder = nullptr;
+        std::array<uint8, MAX_BAND_BYTES> tx{};
+        usize length = 0;
+        usize offset = 0;
+    };
     static constexpr usize MAX_INQUIRY_DEVICES = 16;
     static constexpr uint8 TRACE_CAPACITY = 32;
 
@@ -92,11 +105,6 @@ class BluetoothPrinter {
     bool address_known_ = false;
     std::array<char, 32> printer_name_{};
     std::array<char, 8> pin_{};
-    uint8 image_scale_quarters_ = DEFAULT_IMAGE_SCALE_QUARTERS;
-    uint16 printable_width_dots_ = 0;
-    uint16 left_margin_dots_ = 0;
-    Config::PaperType paper_type_ = Config::PaperType::Roll;
-    Config::CenteringMode centering_ = Config::CenteringMode::Printer;
     std::atomic<PrintStatus> status_{PrintStatus::Disabled};
     std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
     std::atomic_bool connected_{false};
@@ -130,11 +138,7 @@ class BluetoothPrinter {
     usize inquiry_count_ = 0;
     usize name_query_index_ = 0;
     std::array<InquiryDevice, MAX_INQUIRY_DEVICES> inquiry_devices_{};
-    usize tx_length_ = 0;
-    usize tx_offset_ = 0;
-    EscPosRasterEncoder encoder_{};
-    PrintCommandEncoder* command_encoder_ = &encoder_;
-    std::array<uint8, MAX_BAND_BYTES> tx_buffer_{};
+    std::unique_ptr<PrintBuffers> print_buffers_{};
 };
 
 }  // namespace BtPrinter
