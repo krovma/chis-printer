@@ -33,7 +33,9 @@ uint32 setting_value(const Setting setting) {
         case Setting::LeftMargin: return Config::Vars::current_m3_config().resolved_advance().left_margin_dots;
         case Setting::PaperType: return static_cast<uint32>(Config::Vars::paper_type.get());
         case Setting::LabelLength: return Config::Vars::label_length_mm.get();
+        case Setting::LabelGap: return Config::Vars::label_gap_mm.get();
         case Setting::Protocol: return static_cast<uint32>(Config::Vars::print_protocol.get());
+        case Setting::PrintDirection: return Config::Vars::print_direction.get();
         case Setting::Count: return 0;
     }
     return 0;
@@ -74,7 +76,14 @@ uint32 stepped_setting_value(const Setting setting, const uint32 current, const 
         case Setting::PaperType: return direction > 0 ? 1 : 0;
         case Setting::LabelLength:
             return bounded(static_cast<int64>(current) + direction, 1, Config::MAX_LABEL_LENGTH_MM);
-        case Setting::Protocol: return 0;
+        case Setting::LabelGap:
+            return bounded(static_cast<int64>(current) + direction, 0,
+                           Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl ?
+                               Config::MAX_TSPL_LABEL_GAP_MM : Config::MAX_LABEL_GAP_MM);
+        case Setting::Protocol:
+            return direction > 0 ? static_cast<uint32>(Config::PrintProtocol::Tspl) :
+                                   static_cast<uint32>(Config::PrintProtocol::EscPos);
+        case Setting::PrintDirection: return current == 0 ? 1 : 0;
         case Setting::Count: return current;
     }
     return current;
@@ -114,8 +123,23 @@ bool set_setting_value(const Setting setting, const uint32 value, const Config::
         case Setting::LabelLength:
             return Config::Vars::label_length_mm.set(
                 static_cast<uint16>(std::min<uint32>(value, Config::MAX_LABEL_LENGTH_MM)), mode);
+        case Setting::LabelGap: {
+            const uint16 max_gap = Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl ?
+                Config::MAX_TSPL_LABEL_GAP_MM : Config::MAX_LABEL_GAP_MM;
+            return value <= max_gap && Config::Vars::label_gap_mm.set(static_cast<uint16>(value), mode);
+        }
         case Setting::Protocol:
-            return value == 0 && Config::Vars::print_protocol.set(Config::PrintProtocol::EscPos, mode);
+            if (value == static_cast<uint32>(Config::PrintProtocol::EscPos)) {
+                return Config::Vars::print_protocol.set(Config::PrintProtocol::EscPos, mode);
+            }
+            return value == static_cast<uint32>(Config::PrintProtocol::Tspl) &&
+                   (Config::Vars::paper_type.get() != Config::PaperType::Label ||
+                    Config::Vars::label_gap_mm.get() <= Config::MAX_TSPL_LABEL_GAP_MM) &&
+                   Config::Vars::print_protocol.set(Config::PrintProtocol::Tspl, mode);
+        case Setting::PrintDirection:
+            return value <= 1 &&
+                   Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl &&
+                   Config::Vars::print_direction.set(static_cast<uint8>(value), mode);
         case Setting::Count:
             return false;
     }

@@ -7,7 +7,8 @@
 namespace App {
 
 Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_preview,
-                            const bool m3_connected, const bool firmware_centering) {
+                            const bool m3_connected, const bool firmware_centering,
+                            const bool label_paper, const bool tspl) {
     switch (mode_) {
         case Mode::Menu:
             if (menu_page_ == MenuPage::Error) {
@@ -58,7 +59,7 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 const int direction = key == Key::Up ? -1 : 1;
                 int next = static_cast<int>(setting_selection_) + direction;
                 while (next >= 0 && next < static_cast<int>(Setting::Count) &&
-                       !setting_visible(static_cast<Setting>(next), firmware_centering)) {
+                       !setting_visible(static_cast<Setting>(next), firmware_centering, label_paper, tspl)) {
                     next += direction;
                 }
                 if (next >= 0 && next < static_cast<int>(Setting::Count)) {
@@ -71,7 +72,7 @@ Action StateMachine::on_key(const Key key, const bool m1_waiting, const bool m1_
                 return Action::BeginAndResetLeftMargin;
             }
             if (key == Key::Confirm) {
-                if (!setting_visible(setting_selection(), firmware_centering)) return Action::None;
+                if (!setting_visible(setting_selection(), firmware_centering, label_paper, tspl)) return Action::None;
                 setting_editing_ = true;
                 return Action::BeginSetting;
             }

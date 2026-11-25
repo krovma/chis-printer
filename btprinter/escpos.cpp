@@ -140,8 +140,13 @@ void EscPosRasterEncoder::dither_row(const usize output_y, uint8* bits) {
 }
 
 PrintCommandEncoder* protocol_encoder(const Config::PrintProtocol protocol,
-                                      EscPosRasterEncoder& escpos) {
-    return protocol == Config::PrintProtocol::EscPos ? &escpos : nullptr;
+                                      EscPosRasterEncoder& escpos,
+                                      PrintCommandEncoder& tspl) {
+    switch (protocol) {
+        case Config::PrintProtocol::EscPos: return &escpos;
+        case Config::PrintProtocol::Tspl: return &tspl;
+    }
+    return nullptr;
 }
 
 usize EscPosRasterEncoder::raster_size() const {

@@ -20,6 +20,7 @@ extern CVar<uint8> rx_sample_delay_us;
 extern CVar<PrinterType> printer_type;
 extern CVar<PaperType> paper_type;
 extern CVar<PrintProtocol> print_protocol;
+extern CVar<uint8> print_direction;
 extern CVar<CenteringMode> centering;
 extern CVar<uint16> label_length_mm;
 

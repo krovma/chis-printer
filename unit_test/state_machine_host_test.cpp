@@ -160,4 +160,43 @@ int main() {
     assert(margins.on_key(Key::Confirm, false, false, false, true) == Action::SaveSetting);
     margins.setting_saved();
     assert(!margins.setting_editing());
+
+    StateMachine label_settings;
+    label_settings.enter_settings();
+    for (int index = 0; index < 9; ++index) {
+        assert(label_settings.on_key(Key::Down, false, false, false) == Action::Redraw);
+    }
+    assert(label_settings.setting_selection() == Setting::PaperType);
+    assert(setting_visible(Setting::Protocol, false));
+    assert(!setting_visible(Setting::LabelLength, false));
+    assert(!setting_visible(Setting::LabelGap, false));
+    assert(!setting_visible(Setting::PrintDirection, false, false, false));
+    assert(setting_visible(Setting::PrintDirection, false, false, true));
+    assert(setting_visible(Setting::Protocol, false, true));
+    assert(setting_visible(Setting::LabelLength, false, true));
+    assert(setting_visible(Setting::LabelGap, false, true));
+    assert(setting_visible(Setting::PrintDirection, false, false, true));
+    assert(setting_visible(Setting::Protocol, false, false));
+    assert(label_settings.on_key(Key::Down, false, false, false) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::Protocol);
+    assert(label_settings.on_key(Key::Up, false, false, false) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::PaperType);
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::Protocol);
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::LabelLength);
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::LabelGap);
+    assert(label_settings.on_key(Key::Up, false, false, false, false, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::LabelLength);
+    assert(label_settings.on_key(Key::Up, false, false, false, false, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::Protocol);
+    assert(label_settings.on_key(Key::Confirm, false, false, false, false, true) == Action::BeginSetting);
+    label_settings.setting_saved();
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::LabelLength);
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::LabelGap);
+    assert(label_settings.on_key(Key::Down, false, false, false, false, true, true) == Action::Redraw);
+    assert(label_settings.setting_selection() == Setting::PrintDirection);
 }

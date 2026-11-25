@@ -52,6 +52,7 @@ class EscPosRasterEncoder final : public PrintCommandEncoder {
 };
 
 PrintCommandEncoder* protocol_encoder(Config::PrintProtocol protocol,
-                                      EscPosRasterEncoder& escpos);
+                                      EscPosRasterEncoder& escpos,
+                                      PrintCommandEncoder& tspl);
 
 }  // namespace BtPrinter

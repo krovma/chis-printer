@@ -162,16 +162,20 @@ bool encode_paper_type(const PaperType& value, char* output, const usize capacit
 bool decode_protocol(const toml_datum_t datum, PrintProtocol& output) {
     if (datum.type != TOML_STRING) return false;
     const std::string_view value{datum.u.str.ptr, static_cast<usize>(datum.u.str.len)};
-    if (value != "escpos") return false;
-    output = PrintProtocol::EscPos;
+    if (value == "escpos") output = PrintProtocol::EscPos;
+    else if (value == "tspl") output = PrintProtocol::Tspl;
+    else return false;
     return true;
 }
 
-bool normalize_protocol(PrintProtocol& value) { return value == PrintProtocol::EscPos; }
+bool normalize_protocol(PrintProtocol& value) {
+    return value == PrintProtocol::EscPos || value == PrintProtocol::Tspl;
+}
 
 bool encode_protocol(const PrintProtocol& value, char* output, const usize capacity) {
-    if (value != PrintProtocol::EscPos) return false;
-    const int length = std::snprintf(output, capacity, "\"escpos\"");
+    if (value != PrintProtocol::EscPos && value != PrintProtocol::Tspl) return false;
+    const int length = std::snprintf(output, capacity, "\"%s\"",
+                                     value == PrintProtocol::Tspl ? "tspl" : "escpos");
     return length > 0 && static_cast<usize>(length) < capacity;
 }
 
@@ -299,6 +303,8 @@ CVar<PaperType> paper_type{"m3.paper_type", PaperType::Roll,
     decode_paper_type, normalize_paper_type, encode_paper_type};
 CVar<PrintProtocol> print_protocol{"m3.protocol", PrintProtocol::EscPos,
     decode_protocol, normalize_protocol, encode_protocol};
+CVar<uint8> print_direction{"m3.print_direction", 1,
+    decode_integer<uint8, 0, 1>, clamp_integer<uint8, 0, 1>, encode_integer<uint8>};
 CVar<CenteringMode> centering{"m3.centering", CenteringMode::Printer,
     decode_centering, normalize_centering, encode_centering};
 CVar<uint16> label_length_mm{"m3.label_length_mm", DEFAULT_LABEL_LENGTH_MM,
@@ -393,7 +399,8 @@ M3Config current_m3_config() {
     config.pin = pin.get();
     config.printer_type = printer_type.get();
     config.paper_type = paper_type.get();
-    config.protocol = print_protocol.get();
+    config.protocol = config.paper_type == PaperType::Label ? print_protocol.get() : PrintProtocol::EscPos;
+    config.print_direction = print_direction.get();
     config.centering = centering.get();
     config.label_length_mm = label_length_mm.get();
     config.label_gap_mm = label_gap_mm.get();

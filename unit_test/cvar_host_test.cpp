@@ -46,7 +46,8 @@ constexpr std::string_view CONFIG =
     "[m1]\nauto_cut_time_limit = 0.25\nsimulated_print_time = 2.5\n"
     "[m2]\nrx_sample_delay_us = 8\n"
     "[m3]\nprinter_name = \"Printer X\"\npin = \"2468\"\nprinter_type = \"80mm\"\n"
-    "paper_type = \"label\"\nlabel_length_mm = 75\nlabel_gap_mm = 2\nprotocol = \"escpos\"\n"
+    "paper_type = \"label\"\nlabel_length_mm = 75\nlabel_gap_mm = 2\nprotocol = \"tspl\"\n"
+    "print_direction = 0\n"
     "centering = \"firmware\"\n"
     "[m3.advance]\nprintable_width_dots_58mm = 360\nimage_scale_58mm = 2\n"
     "printable_width_dots_80mm = 512\nimage_scale_80mm = 3\n"
@@ -70,17 +71,19 @@ bool encode_test(const uint8& value, char* output, const usize capacity) {
 
 void test_registration() {
     auto& controller = Config::Controller::instance();
-    assert(controller.registered_count() == 35);
+    assert(controller.registered_count() == 36);
     assert(controller.find("m3.pin") == &Config::Vars::pin);
+    assert(controller.find("m3.label_gap_mm") == &Config::Vars::label_gap_mm);
+    assert(controller.find("m3.print_direction") == &Config::Vars::print_direction);
     assert(controller.find("missing") == nullptr);
     {
         Config::CVar<uint8> temporary{"test.value", 3, decode_test, clamp_test, encode_test};
-        assert(controller.registered_count() == 36);
+        assert(controller.registered_count() == 37);
         assert(controller.find("test.value") == &temporary);
         assert(temporary.set(20));
         assert(temporary.get() == 10);
     }
-    assert(controller.registered_count() == 35);
+    assert(controller.registered_count() == 36);
     assert(controller.find("test.value") == nullptr);
 }
 
@@ -98,7 +101,8 @@ void test_loading() {
     assert(m3.paper_type == Config::PaperType::Label);
     assert(m3.label_length_mm == 75);
     assert(m3.label_gap_mm == 2);
-    assert(m3.protocol == Config::PrintProtocol::EscPos);
+    assert(m3.protocol == Config::PrintProtocol::Tspl);
+    assert(m3.print_direction == 0);
     assert(m3.centering == Config::CenteringMode::Firmware);
     assert(std::string_view{m3.printer_name.data()} == "Printer X");
     assert(std::string_view{m3.pin.data()} == "2468");
@@ -129,9 +133,15 @@ void test_loading() {
     assert(fallback.resolved_advance().printable_width_dots == 384);
     assert(fallback.resolved_advance().image_scale_quarters == Config::SCALE_2X);
     assert(fallback.paper_type == Config::PaperType::Roll);
+    assert(fallback.protocol == Config::PrintProtocol::EscPos);
+    assert(fallback.print_direction == 1);
     assert(fallback.centering == Config::CenteringMode::Printer);
     assert(fallback.label_length_mm == 50);
     assert(fallback.label_gap_mm == 0);
+
+    assert(controller.load_text("format_version = 1\n[m3]\nprotocol = \"tspl\"\n"));
+    assert(Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl);
+    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::EscPos);
 
     assert(controller.load_text("format_version = 1\n[m3]\nprinter_type = \"110mm\"\n"
                                 "paper_type = \"label\"\nlabel_length_mm = 100\nprotocol = \"escpos\"\n"
@@ -179,6 +189,12 @@ void test_set_and_reload() {
     assert(Fixture::document.find("printer_name = \"Printer X\"") != std::string::npos);
     assert(Fixture::document.find("pin = \"2468\"") != std::string::npos);
     assert(Fixture::document.find("printable_width_dots_80mm = 512") != std::string::npos);
+    assert(Config::Vars::label_gap_mm.set(5, Config::WriteMode::RuntimeAndToml));
+    assert(Fixture::document.find("label_gap_mm = 5") != std::string::npos);
+    assert(Config::Vars::print_protocol.set(Config::PrintProtocol::Tspl, Config::WriteMode::RuntimeAndToml));
+    assert(Fixture::document.find("protocol = \"tspl\"") != std::string::npos);
+    assert(Config::Vars::print_direction.set(0, Config::WriteMode::RuntimeAndToml));
+    assert(Fixture::document.find("print_direction = 0") != std::string::npos);
     assert(Config::Vars::centering.set(Config::CenteringMode::Printer, Config::WriteMode::RuntimeAndToml));
     assert(Fixture::document.find("centering = \"printer\"") != std::string::npos);
     assert(Config::Vars::palette.set(0, Config::WriteMode::RuntimeAndToml));
@@ -199,6 +215,9 @@ void test_set_and_reload() {
     assert(Config::Vars::palette.get() == 0);
     assert(Config::Vars::auto_cut_time_limit_us.get() == 3'500'000);
     assert(Config::Vars::current_m3_config().centering == Config::CenteringMode::Printer);
+    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::Tspl);
+    assert(Config::Vars::current_m3_config().print_direction == 0);
+    assert(Config::Vars::current_m3_config().label_gap_mm == 5);
     assert(std::string_view{Config::Vars::printer_name.get().data()} == QUOTED_NAME);
     Fixture::readable = false;
     assert(!controller.reload());

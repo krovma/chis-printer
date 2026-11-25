@@ -10,6 +10,7 @@
 #include "types.h"
 #include "config/printer_config.h"
 #include "btprinter/escpos.h"
+#include "btprinter/tspl.h"
 
 namespace BtPrinter {
 
@@ -91,7 +92,12 @@ class BluetoothPrinter {
         Config::M3AdvanceConfig advance;
         Config::PaperType paper;
         Config::CenteringMode centering;
+        uint16 media_width_mm;
+        uint16 label_length_mm;
+        uint16 label_gap_mm;
+        uint8 print_direction;
         EscPosRasterEncoder escpos{};
+        TsplRasterEncoder tspl{};
         PrintCommandEncoder* encoder = nullptr;
         std::array<uint8, MAX_BAND_BYTES> tx{};
         usize length = 0;

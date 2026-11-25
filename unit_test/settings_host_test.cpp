@@ -40,7 +40,24 @@ int main() {
     assert(stepped_setting_value(Setting::LeftMargin, Config::MAX_LEFT_MARGIN_DOTS, 1) ==
            Config::MAX_LEFT_MARGIN_DOTS);
     assert(stepped_setting_value(Setting::LabelLength, 50, 1) == 51);
-    assert(stepped_setting_value(Setting::Protocol, 0, 1) == 0);
+    assert(stepped_setting_value(Setting::Protocol, 0, 1) ==
+           static_cast<uint32>(Config::PrintProtocol::Tspl));
+    assert(stepped_setting_value(Setting::LabelGap, 0, 1) == 1);
+    assert(!set_setting_value(Setting::LabelGap, Config::MAX_LABEL_GAP_MM + 1, Config::WriteMode::RuntimeOnly));
+    assert(stepped_setting_value(Setting::PrintDirection, 1, 1) == 0);
+    assert(stepped_setting_value(Setting::PrintDirection, 0, -1) == 1);
+    assert(setting_value(Setting::Protocol) == static_cast<uint32>(Config::PrintProtocol::EscPos));
+    assert(set_setting_value(Setting::LabelGap, Config::MAX_LABEL_GAP_MM, Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::Tspl),
+                             Config::WriteMode::RuntimeOnly));
+    assert(setting_value(Setting::Protocol) == static_cast<uint32>(Config::PrintProtocol::Tspl));
+    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::EscPos);
+    assert(set_setting_value(Setting::PrintDirection, 0, Config::WriteMode::RuntimeOnly));
+    assert(Config::Vars::print_direction.get() == 0);
+    assert(set_setting_value(Setting::PrintDirection, 1, Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::EscPos),
+                             Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::LabelGap, 0, Config::WriteMode::RuntimeOnly));
 
     assert(set_setting_value(Setting::Backlight, 5, Config::WriteMode::RuntimeOnly));
     assert(setting_value(Setting::Backlight) == 5);
@@ -61,7 +78,27 @@ int main() {
     assert(!set_setting_value(Setting::LeftMargin, Config::MAX_LEFT_MARGIN_DOTS + 1,
                               Config::WriteMode::RuntimeOnly));
     assert(set_setting_value(Setting::LabelLength, 75, Config::WriteMode::RuntimeOnly));
-    assert(!set_setting_value(Setting::Protocol, 1, Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::LabelGap, 2, Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::Tspl),
+                             Config::WriteMode::RuntimeOnly));
+    assert(setting_value(Setting::PrintDirection) == 1);
+    assert(set_setting_value(Setting::PrintDirection, 0, Config::WriteMode::RuntimeOnly));
+    assert(setting_value(Setting::PrintDirection) == 0);
+    assert(!set_setting_value(Setting::PrintDirection, 2, Config::WriteMode::RuntimeOnly));
+    assert(setting_value(Setting::Protocol) == static_cast<uint32>(Config::PrintProtocol::Tspl));
+    assert(stepped_setting_value(Setting::LabelGap, Config::MAX_TSPL_LABEL_GAP_MM, 1) ==
+           Config::MAX_TSPL_LABEL_GAP_MM);
+    assert(!set_setting_value(Setting::LabelGap, Config::MAX_TSPL_LABEL_GAP_MM + 1,
+                              Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::EscPos),
+                             Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::LabelGap, Config::MAX_LABEL_GAP_MM, Config::WriteMode::RuntimeOnly));
+    assert(!set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::Tspl),
+                              Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::LabelGap, Config::MAX_TSPL_LABEL_GAP_MM,
+                             Config::WriteMode::RuntimeOnly));
+    assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::Tspl),
+                             Config::WriteMode::RuntimeOnly));
     assert(setting_value(Setting::Locale) == 0);
     assert(setting_value(Setting::PrinterType) == width(PrinterType::Mm80));
     assert(setting_value(Setting::PaperType) == 1);

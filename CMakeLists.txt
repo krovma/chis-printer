@@ -122,6 +122,8 @@ add_executable(kuper-printer
     btprinter/escpos.h
     btprinter/print_layout.h
     btprinter/protocol.h
+    btprinter/tspl.cpp
+    btprinter/tspl.h
     btstack_config.h
     config/cvar.cpp
     config/cvar.h

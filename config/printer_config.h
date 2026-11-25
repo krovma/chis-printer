@@ -12,7 +12,7 @@ namespace Config {
 
 enum class PrinterType : uint8 { Mm37, Mm58, Mm80, Mm110, Count };
 enum class PaperType : uint8 { Roll, Label };
-enum class PrintProtocol : uint8 { EscPos };
+enum class PrintProtocol : uint8 { EscPos, Tspl };
 enum class CenteringMode : uint8 { Printer, Firmware };
 
 inline constexpr usize PRINTER_TYPE_COUNT = static_cast<usize>(PrinterType::Count);
@@ -22,6 +22,18 @@ inline constexpr std::array<const char*, PRINTER_TYPE_COUNT> PRINTER_TYPE_NAMES{
 inline constexpr uint16 DEFAULT_LABEL_LENGTH_MM = 50;
 inline constexpr uint16 MAX_LABEL_LENGTH_MM = 1000;
 inline constexpr uint16 MAX_LABEL_GAP_MM = 100;
+inline constexpr uint16 MAX_TSPL_LABEL_GAP_MM = 25;
+
+constexpr uint16 standard_paper_width_mm(const PrinterType type) {
+    switch (type) {
+        case PrinterType::Mm37: return 37;
+        case PrinterType::Mm58: return 58;
+        case PrinterType::Mm80: return 80;
+        case PrinterType::Mm110: return 110;
+        case PrinterType::Count: break;
+    }
+    return 0;
+}
 // Store every scale in quarter units so 1.5x stays exact in pixel and margin arithmetic.
 inline constexpr uint8 SCALE_UNIT = 4;
 inline constexpr uint8 SCALE_1X = 4;
@@ -84,6 +96,7 @@ struct M3Config {
     PrinterType printer_type = PrinterType::Mm58;
     PaperType paper_type = PaperType::Roll;
     PrintProtocol protocol = PrintProtocol::EscPos;
+    uint8 print_direction = 1;
     CenteringMode centering = CenteringMode::Printer;
     uint16 label_length_mm = DEFAULT_LABEL_LENGTH_MM;
     uint16 label_gap_mm = 0;

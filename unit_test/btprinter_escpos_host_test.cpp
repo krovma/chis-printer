@@ -8,6 +8,7 @@
 
 #include "types.h"
 #include "btprinter/escpos.h"
+#include "btprinter/tspl.h"
 #include "btprinter/print_layout.h"
 
 namespace {
@@ -198,9 +199,11 @@ int main() {
     check_raster_header(band, width_5x, 16, length);
     assert(black_dots(band, length) == width_5x * 16);
 
-    auto* stream = BtPrinter::protocol_encoder(Config::PrintProtocol::EscPos, encoder);
+    BtPrinter::TsplRasterEncoder tspl;
+    auto* stream = BtPrinter::protocol_encoder(Config::PrintProtocol::EscPos, encoder, tspl);
     assert(stream == &encoder);
-    assert(BtPrinter::protocol_encoder(static_cast<Config::PrintProtocol>(1), encoder) == nullptr);
+    assert(BtPrinter::protocol_encoder(Config::PrintProtocol::Tspl, encoder, tspl) == &tspl);
+    assert(BtPrinter::protocol_encoder(static_cast<Config::PrintProtocol>(2), encoder, tspl) == nullptr);
     usize sent = 0;
     const auto read_chunk = [&] {
         assert(stream->next_chunk(band.data(), band.size(), length) == EncodeResult::Chunk);
@@ -326,5 +329,5 @@ int main() {
     assert(original.top_dots + original.content_dots + original.bottom_dots == original.label_dots);
     const auto fractional = BtPrinter::layout_label(16, 56, Config::SCALE_1_5X, 10);
     assert(fractional.content_dots == 108 && fractional.label_dots == 80 && fractional.overflow);
-    assert(BtPrinter::label_length_dots(2) == 16);
+    assert(BtPrinter::millimeters_to_dots(2) == 16);
 }

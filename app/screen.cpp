@@ -91,8 +91,14 @@ bool draw_setting_value(const Setting setting, const uint32 current,
         case Setting::LabelLength:
             std::snprintf(value, sizeof(value), "%u mm", static_cast<unsigned>(current));
             break;
+        case Setting::LabelGap:
+            std::snprintf(value, sizeof(value), "%u mm", static_cast<unsigned>(current));
+            break;
         case Setting::Protocol:
-            std::snprintf(value, sizeof(value), "ESC/POS");
+            return Display::Ui::draw_utf8(current == static_cast<uint32>(Config::PrintProtocol::Tspl) ?
+                                               "TSPL" : "ESC/POS", x, y, BLACK);
+        case Setting::PrintDirection:
+            std::snprintf(value, sizeof(value), "DIR %u", static_cast<unsigned>(current));
             break;
         case Setting::Count:
             return false;
@@ -120,7 +126,7 @@ std::string visible_name(const char* source) {
 bool draw_menu(const uint8 selection) {
     Display::clear(WHITE);
     constexpr std::string_view keys[]{"mode_m1", "mode_m2", "mode_m3", "mode_m13", "settings"};
-    if (!centered("menu", 14)) return false;
+    if (!centered("menu", 22)) return false;
     for (uint8 row = 0; row < 5; ++row) {
         const int16 y = static_cast<int16>(49 + row * 37);
         if (!Display::Ui::draw_utf8(selection == row ? ">" : " ", 38, y, BLACK) ||
@@ -130,15 +136,15 @@ bool draw_menu(const uint8 selection) {
 }
 
 bool draw_settings(const Setting selection, const bool editing,
-                   const std::string_view error) {
+                   const std::string_view error, const bool label_paper, const bool tspl) {
     constexpr std::string_view labels[]{"setting_locale", "setting_palette", "setting_backlight",
                                         "setting_auto_cut", "setting_print_time", "setting_rx_delay",
                                         "setting_printer_type", "setting_image_scale", "setting_centering",
-                                        "setting_left_margin", "setting_paper_type", "setting_label_length",
-                                        "setting_protocol"};
+                                        "setting_left_margin", "setting_paper_type", "setting_protocol",
+                                        "setting_label_length", "setting_label_gap", "setting_print_direction"};
     static_assert(sizeof(labels) / sizeof(*labels) == static_cast<usize>(Setting::Count));
     Display::clear(WHITE);
-    if (!centered("settings", 12)) return false;
+    if (!centered("settings", 22)) return false;
     constexpr uint8 visible_rows = 7;
     const bool firmware_centering = Config::Vars::centering.get() == Config::CenteringMode::Firmware;
     std::array<Setting, static_cast<usize>(Setting::Count)> visible{};
@@ -146,7 +152,7 @@ bool draw_settings(const Setting selection, const bool editing,
     uint8 selected = 0;
     for (uint8 index = 0; index < static_cast<uint8>(Setting::Count); ++index) {
         const auto item = static_cast<Setting>(index);
-        if (!setting_visible(item, firmware_centering)) continue;
+        if (!setting_visible(item, firmware_centering, label_paper, tspl)) continue;
         if (item == selection) selected = count;
         visible[count++] = item;
     }
@@ -205,9 +211,9 @@ bool draw_m13_receive(const bool countdown, const uint32 remaining_us,
     return centered("Waiting", 108) && centered("Left back", 207);
 }
 
-bool draw_m3_pairing(const uint8 selection, const std::string_view status) {
+bool draw_m3_pairing(const uint8 selection) {
     Display::clear(WHITE);
-    return centered("Bluetooth", 33) && centered(status, 72) &&
+    return centered("Bluetooth", 33) &&
            Display::Ui::draw_utf8(selection == 0 ? ">" : " ", 40, 116, BLACK) &&
            draw_label("Re-pair", 68, 116) &&
            Display::Ui::draw_utf8(selection == 1 ? ">" : " ", 40, 155, BLACK) &&
@@ -215,13 +221,16 @@ bool draw_m3_pairing(const uint8 selection, const std::string_view status) {
            centered("Left back", 207);
 }
 
-bool draw_paired_badge() {
-    return draw_label("PAIRED", 4, 2);
+bool draw_bluetooth_status(const std::string_view status) {
+    std::string text = Display::Ui::translate("Bluetooth");
+    text.push_back(' ');
+    text += Display::Ui::translate(status);
+    return Display::Ui::draw_utf8(text, 4, 2, BLACK);
 }
 
 bool draw_file_list(const Storage::GbrCatalog& catalog, const usize selection, const bool bluetooth) {
     Display::clear(WHITE);
-    if (!centered(bluetooth ? "BT files" : "GBR files", 12)) {
+    if (!centered(bluetooth ? "BT files" : "GBR files", 22)) {
         return false;
     }
     if (catalog.count() == 0) {
@@ -234,7 +243,7 @@ bool draw_file_list(const Storage::GbrCatalog& catalog, const usize selection, c
         if (!catalog.name_at(first + row, name, sizeof(name))) {
             return false;
         }
-        const int16 y = static_cast<int16>(39 + row * 26);
+        const int16 y = static_cast<int16>(43 + row * 26);
         if (first + row == selection && !Display::Ui::draw_utf8(">", 8, y, BLACK)) {
             return false;
         }
@@ -274,12 +283,12 @@ bool draw_block_indicator(const usize index, const usize count) {
     char label[24]{};
     std::snprintf(label, sizeof(label), "%lu/%lu", static_cast<unsigned long>(index + 1),
                   static_cast<unsigned long>(count));
-    for (uint16 y = 0; y < 20; ++y) {
+    for (uint16 y = 20; y < 40; ++y) {
         for (uint16 x = 0; x < Display::WIDTH; ++x) {
             Display::set_pixel(x, y, WHITE);
         }
     }
-    return centered(label, 2);
+    return centered(label, 22);
 }
 
 bool draw_error(const std::string_view message) {

@@ -39,9 +39,12 @@ paper_type = "roll"
 # Length of the printable label in millimeters (integer 1..1000).
 label_length_mm = 50
 # Optional gap between labels (integer millimeters 0..100, default 0).
+# TSPL supports gaps up to 25 mm on the documented Gprinter models.
 # label_gap_mm = 2
-# Protocol choices: escpos.
+# Protocol choices: escpos or tspl. Roll paper uses escpos.
 protocol = "escpos"
+# TSPL print direction: 1 (default) or 0.
+# print_direction = 1
 # Image centering: printer uses ESC a 1; firmware uses ESC a 0 and GS L
 # to place the left white margin in dots within the selected printable width.
 centering = "printer"

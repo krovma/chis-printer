@@ -21,6 +21,10 @@ struct PrintBlock {
     uint16 printable_width_dots = 0;
     Config::CenteringMode centering = Config::CenteringMode::Printer;
     uint16 left_margin_dots = Config::AUTO_LEFT_MARGIN;
+    uint16 media_width_mm = 0;
+    uint16 label_length_mm = Config::DEFAULT_LABEL_LENGTH_MM;
+    uint16 label_gap_mm = 0;
+    uint8 print_direction = 1;
 };
 
 enum class EncodeResult : uint8 { Chunk, Complete, Error };

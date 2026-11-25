@@ -14,10 +14,13 @@ enum class M2Page : uint8 { List, Preview, LabelWarning, Printing, Error };
 enum class M3Page : uint8 { Menu, Pairing, Files, Receive };
 enum class Setting : uint8 {
     Locale, Palette, Backlight, AutoCut, PrintTime, RxDelay, PrinterType, ImageScale,
-    Centering, LeftMargin, PaperType, LabelLength, Protocol, Count
+    Centering, LeftMargin, PaperType, Protocol, LabelLength, LabelGap, PrintDirection, Count
 };
-constexpr bool setting_visible(const Setting setting, const bool firmware_centering) {
-    return setting != Setting::LeftMargin || firmware_centering;
+constexpr bool setting_visible(const Setting setting, const bool firmware_centering,
+                               const bool label_paper = false, const bool tspl = false) {
+    return (setting != Setting::LeftMargin || firmware_centering) &&
+           ((setting != Setting::LabelLength && setting != Setting::LabelGap) || label_paper) &&
+           (setting != Setting::PrintDirection || tspl);
 }
 enum class Action : uint8 {
     None, Redraw, PaletteDown, PaletteUp,
@@ -46,7 +49,7 @@ class StateMachine {
     usize selected_block() const { return selected_block_; }
 
     Action on_key(Key key, bool m1_waiting, bool m1_preview, bool m3_connected,
-                  bool firmware_centering = false);
+                  bool firmware_centering = false, bool label_paper = false, bool tspl = false);
     void menu_failed();
     void enter_m1();
     void exit_m1();

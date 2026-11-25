@@ -85,17 +85,24 @@ bool BluetoothPrinter::allocate_print_buffers(const Config::M3Config& config) {
     }
     const auto settings = config.resolved_advance();
     std::unique_ptr<PrintBuffers> buffers{
-        new (std::nothrow) PrintBuffers{settings, config.paper_type, config.centering}};
+        new (std::nothrow) PrintBuffers{settings, config.paper_type, config.centering,
+                                        Config::standard_paper_width_mm(config.printer_type),
+                                        config.label_length_mm, config.label_gap_mm,
+                                        config.print_direction}};
     if (!buffers) {
         std::printf("ERROR: M3 BT print buffer allocation failed\n");
         return false;
     }
-    buffers->encoder = protocol_encoder(config.protocol, buffers->escpos);
+    buffers->encoder = protocol_encoder(config.protocol, buffers->escpos, buffers->tspl);
     if (!Config::printer_type_supports_scale(config.printer_type, settings.image_scale_quarters) ||
         settings.printable_width_dots < Config::scaled_dots(SOURCE_WIDTH, settings.image_scale_quarters) ||
         buffers->encoder == nullptr ||
         config.label_length_mm == 0 || config.label_length_mm > Config::MAX_LABEL_LENGTH_MM ||
         config.label_gap_mm > Config::MAX_LABEL_GAP_MM ||
+        config.print_direction > 1 ||
+        (config.protocol == Config::PrintProtocol::Tspl &&
+         (config.paper_type != Config::PaperType::Label ||
+          config.label_gap_mm > Config::MAX_TSPL_LABEL_GAP_MM)) ||
         (config.centering != Config::CenteringMode::Printer &&
          config.centering != Config::CenteringMode::Firmware) ||
         (config.paper_type != Config::PaperType::Roll && config.paper_type != Config::PaperType::Label)) {
@@ -322,7 +329,9 @@ bool BluetoothPrinter::start(const uint8* image, const usize size,
     const auto& advance = buffers->advance;
     if (!buffers->encoder->reset({image, size, palette, advance.image_scale_quarters, first_block, last_block,
                                   buffers->paper, before_feed_dots, after_feed_dots,
-                                  advance.printable_width_dots, buffers->centering, advance.left_margin_dots})) {
+                                  advance.printable_width_dots, buffers->centering, advance.left_margin_dots,
+                                  buffers->media_width_mm, buffers->label_length_mm, buffers->label_gap_mm,
+                                  buffers->print_direction})) {
         status_.store(PrintStatus::Error, std::memory_order_release);
         cyw43_arch_lwip_end();
         return false;

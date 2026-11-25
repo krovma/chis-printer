@@ -184,18 +184,16 @@ class Application {
                        static_cast<unsigned long>(bt_event.uptime_ms), BtPrinter::trace_kind_name(bt_event.kind),
                        static_cast<unsigned long>(bt_event.value), static_cast<unsigned long>(bt_event.extra));
             }
-            if (state_.mode() == Mode::M3 || state_.mode() == Mode::M13) {
-                const auto connection = bt_printer_.connection_state();
-                if (connection != drawn_connection_state_) {
-                    if (drawn_connection_state_ == BtPrinter::ConnectionState::Connected &&
-                        connection != BtPrinter::ConnectionState::Connected && state_.mode() == Mode::M3 &&
-                        state_.m3_page() == M3Page::Files) {
-                        image_.clear();
-                        state_.m3_connection_lost();
-                    }
-                    drawn_connection_state_ = connection;
-                    dirty_ = true;
+            const auto connection = bt_printer_.connection_state();
+            if (connection != drawn_connection_state_) {
+                if (drawn_connection_state_ == BtPrinter::ConnectionState::Connected &&
+                    connection != BtPrinter::ConnectionState::Connected && state_.mode() == Mode::M3 &&
+                    state_.m3_page() == M3Page::Files) {
+                    image_.clear();
+                    state_.m3_connection_lost();
                 }
+                drawn_connection_state_ = connection;
+                dirty_ = true;
             }
 #if defined(KP_BT_DEBUG)
             if (time_reached(next_m3_report)) {
@@ -300,7 +298,15 @@ class Application {
     void adjust_setting(const int delta) {
         const Setting setting = state_.setting_selection();
         const uint32 next = stepped_setting_value(setting, setting_value(setting), delta);
-        if (!set_setting_value(setting, next, Config::WriteMode::RuntimeOnly)) return;
+        if (!set_setting_value(setting, next, Config::WriteMode::RuntimeOnly)) {
+            if (setting == Setting::Protocol &&
+                next == static_cast<uint32>(Config::PrintProtocol::Tspl) &&
+                Config::Vars::label_gap_mm.get() > Config::MAX_TSPL_LABEL_GAP_MM) {
+                settings_error_ = "settings_tspl_gap_limit";
+                dirty_ = true;
+            }
+            return;
+        }
         preview_setting(setting);
         settings_error_ = {};
         dirty_ = true;
@@ -455,8 +461,9 @@ class Application {
     bool prepare_bt_layout() {
         label_layout_ = {};
         if (Config::Vars::paper_type.get() != Config::PaperType::Label) return true;
+        const auto advance = Config::Vars::current_m3_config().resolved_advance();
         label_layout_ = BtPrinter::layout_label(image_.source_rows(), image_.inner_margin_rows(),
-                                                Config::Vars::current_m3_config().resolved_advance().image_scale_quarters,
+                                                advance.image_scale_quarters,
                                                 Config::Vars::label_length_mm.get());
         return !label_layout_.overflow;
     }
@@ -473,7 +480,7 @@ class Application {
             before_dots = first ? label_layout_.top_dots :
                 Config::scaled_dots(previous_after_rows + current_before_rows, scale_quarters);
             after_dots = last ? label_layout_.bottom_dots +
-                BtPrinter::label_length_dots(Config::Vars::label_gap_mm.get()) : 0;
+                BtPrinter::millimeters_to_dots(Config::Vars::label_gap_mm.get()) : 0;
         }
         return bt_printer_.start(image_.data(), image_.size(), image_.palette(),
                                  first, last, before_dots, after_dots);
@@ -838,7 +845,9 @@ class Application {
         const Action action = state_.on_key(key, snapshot.view == Gbp::Terminal::ViewState::Waiting,
                                             snapshot.view == Gbp::Terminal::ViewState::Preview,
                                             bt_printer_.connected(),
-                                            Config::Vars::centering.get() == Config::CenteringMode::Firmware);
+                                            Config::Vars::centering.get() == Config::CenteringMode::Firmware,
+                                            Config::Vars::paper_type.get() == Config::PaperType::Label,
+                                            Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl);
         switch (action) {
             case Action::None: break;
             case Action::Redraw: dirty_ = true; break;
@@ -1001,7 +1010,9 @@ class Application {
                     Screen::draw_menu(state_.menu_selection());
             case Mode::Settings:
                 return Screen::draw_settings(state_.setting_selection(), state_.setting_editing(),
-                                             settings_error_);
+                                             settings_error_,
+                                             Config::Vars::paper_type.get() == Config::PaperType::Label,
+                                             Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl);
             case Mode::M1: return draw_m1(snapshot);
             case Mode::M2:
                 switch (state_.m2_page()) {
@@ -1021,16 +1032,8 @@ class Application {
                     case M3Page::Menu:
                         return Screen::draw_m3_menu(state_.m3_selection(), bt_printer_.connected(),
                                                     state_.mode() == Mode::M13);
-                    case M3Page::Pairing: {
-                        std::string_view status = "Disconnected";
-                        switch (bt_printer_.connection_state()) {
-                            case BtPrinter::ConnectionState::Disconnected: break;
-                            case BtPrinter::ConnectionState::Connecting: status = "Connecting"; break;
-                            case BtPrinter::ConnectionState::Connected: status = "Connected"; break;
-                            case BtPrinter::ConnectionState::Error: status = "Pair failed"; break;
-                        }
-                        return Screen::draw_m3_pairing(state_.m3_pair_selection(), status);
-                    }
+                    case M3Page::Pairing:
+                        return Screen::draw_m3_pairing(state_.m3_pair_selection());
                     case M3Page::Files:
                         switch (state_.m2_page()) {
                             case M2Page::List: return Screen::draw_file_list(catalog_, state_.selected_file(), true);
@@ -1070,8 +1073,14 @@ class Application {
         if (!draw_screen(snapshot)) {
             return;
         }
-        if ((state_.mode() == Mode::M3 || state_.mode() == Mode::M13) && bt_printer_.connected() &&
-            !Screen::draw_paired_badge()) {
+        std::string_view bluetooth_status = "Disconnected";
+        switch (bt_printer_.connection_state()) {
+            case BtPrinter::ConnectionState::Disconnected: break;
+            case BtPrinter::ConnectionState::Connecting: bluetooth_status = "Connecting"; break;
+            case BtPrinter::ConnectionState::Connected: bluetooth_status = "Connected"; break;
+            case BtPrinter::ConnectionState::Error: bluetooth_status = "Pair failed"; break;
+        }
+        if (!Screen::draw_bluetooth_status(bluetooth_status)) {
             return;
         }
         if (!Display::present()) {
