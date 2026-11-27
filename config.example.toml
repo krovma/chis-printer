@@ -41,43 +41,39 @@ label_length_mm = 50
 # Optional gap between labels (integer millimeters 0..100, default 0).
 # TSPL supports gaps up to 25 mm on the documented Gprinter models.
 # label_gap_mm = 2
-# Protocol choices: escpos or tspl. Roll paper uses escpos.
+# Protocol choices are escpos and tspl. TSPL uses a zero gap on roll paper.
 protocol = "escpos"
 # TSPL print direction: 1 (default) or 0.
 # print_direction = 1
-# Image centering: printer uses ESC a 1; firmware uses ESC a 0 and GS L
-# to place the left white margin in dots within the selected printable width.
+# Firmware centering uses the selected left margin in dots. ESC/POS sets GS L
+# and TSPL applies it to the BITMAP X position.
 centering = "printer"
 
 # Optional overrides for each printer type. Missing or invalid scale values
 # use the selected type's default. 1x uses 4x4 Bayer dithering.
 # Scale ranges: 37mm = 1x or 1.5x; 58mm = 1x, 1.5x, 2x; 80mm = 1..3x; 110mm = 1..5x.
-# Missing left margins use (printable_width_dots - scaled_image_width) / 2.
-# The on-device Right key restores this value for the selected paper width and scale.
-# Saved left margins are raw GS L horizontal units; excessive values may clip the image.
 # [m3.advance]
 # 37mm paper: 35mm printable width at about 8 dots/mm, or 280 dots.
 # printable_width_dots_37mm = 280
 # image_scale_37mm = 1
-# left_margin_dots_37mm_1x = 60
-# left_margin_dots_37mm_1_5x = 20
 # 58mm printer: print width 48mm at 203dpi; 2x gives 320 dots per line.
 # printable_width_dots_58mm = 384
 # image_scale_58mm = 2
-# left_margin_dots_58mm_1x = 112
-# left_margin_dots_58mm_1_5x = 72
-# left_margin_dots_58mm_2x = 32
 # 80mm printer: assumes 72mm printable width; 3x gives 480 dots per line.
 # printable_width_dots_80mm = 576
 # image_scale_80mm = 3
-# left_margin_dots_80mm_1x = 208
-# left_margin_dots_80mm_2x = 128
-# left_margin_dots_80mm_3x = 48
 # 110mm printer: 104mm printable width at 203dpi; 5x gives 800 dots.
 # printable_width_dots_110mm = 831
 # image_scale_110mm = 5
-# left_margin_dots_110mm_1x = 335
-# left_margin_dots_110mm_2x = 255
-# left_margin_dots_110mm_3x = 175
-# left_margin_dots_110mm_4x = 95
-# left_margin_dots_110mm_5x = 15
+
+# Set a left margin (0..1023 dots) for each mode, width, and scale.
+# Use keys like 37mm_1_5x and 110mm_5x for the supported combinations above.
+# Missing keys fall back to [m3.advance] left_margin_dots_<width>_<scale>,
+# then to (printable_width_dots - scaled_image_width) / 2.
+# The Right key in the Left Margin setting restores this centered value.
+# [m3.left_margin_dots.escpos]
+# 58mm_2x = 32
+# [m3.left_margin_dots.tspl_dir0]
+# 58mm_2x = 32
+# [m3.left_margin_dots.tspl_dir1]
+# 58mm_2x = 32

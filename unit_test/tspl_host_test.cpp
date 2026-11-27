@@ -121,6 +121,26 @@ int main() {
     const std::string firmware_margin_output = drain(encoder);
     check_raster(firmware_margin_output, "BITMAP 56,0,40,16,0,", 40, 16, 0xff);
 
+    auto roll = make_block(image);
+    roll.paper = Config::PaperType::Roll;
+    roll.first = true;
+    roll.last = true;
+    roll.label_gap_mm = 50;
+    uint16 roll_length_mm = 0;
+    assert(BtPrinter::tspl_roll_label_length_mm(8, Config::SCALE_2X, roll_length_mm));
+    assert(roll_length_mm == 17);
+    roll.label_length_mm = roll_length_mm;
+    assert(encoder.reset(roll));
+    const std::string roll_output = drain(encoder);
+    constexpr std::string_view roll_setup{
+        "SIZE 58 mm,17 mm\r\nGAP 0 mm,0 mm\r\nDIRECTION 0\r\nCLS\r\n"};
+    assert(std::string_view{roll_output}.substr(0, roll_setup.size()) == roll_setup);
+    check_raster(roll_output, "BITMAP 72,0,40,16,0,", 40, 16, 0xff);
+
+    assert(BtPrinter::tspl_roll_label_length_mm(144, Config::SCALE_2X, roll_length_mm));
+    assert(roll_length_mm == 51);
+    assert(!BtPrinter::tspl_roll_label_length_mm(5000, Config::SCALE_2X, roll_length_mm));
+
     last.label_gap_mm = Config::MAX_TSPL_LABEL_GAP_MM + 1;
     assert(!encoder.reset(last));
     last.label_gap_mm = 2;
@@ -128,7 +148,9 @@ int main() {
     assert(!encoder.reset(last));
     last.media_width_mm = 58;
     last.paper = Config::PaperType::Roll;
-    assert(!encoder.reset(last));
+    last.label_gap_mm = 0;
+    last.label_length_mm = 76;
+    assert(encoder.reset(last));
     last.paper = Config::PaperType::Label;
     last.print_direction = 2;
     assert(!encoder.reset(last));

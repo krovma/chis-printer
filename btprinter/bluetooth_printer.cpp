@@ -25,6 +25,14 @@
 namespace BtPrinter {
 namespace {
 constexpr uint64 CONNECTION_TIMEOUT_MS = 60'000;
+
+const char* protocol_name(const Config::PrintProtocol protocol) {
+    return protocol == Config::PrintProtocol::Tspl ? "TSPL" : "ESC/POS";
+}
+
+const char* paper_name(const Config::PaperType paper) {
+    return paper == Config::PaperType::Label ? "label" : "roll";
+}
 }
 
 const char* trace_kind_name(const TraceKind kind) {
@@ -84,10 +92,12 @@ bool BluetoothPrinter::allocate_print_buffers(const Config::M3Config& config) {
         return true;
     }
     const auto settings = config.resolved_advance();
+    const uint16 label_gap_mm = config.protocol == Config::PrintProtocol::Tspl &&
+                                config.paper_type == Config::PaperType::Roll ? 0 : config.label_gap_mm;
     std::unique_ptr<PrintBuffers> buffers{
-        new (std::nothrow) PrintBuffers{settings, config.paper_type, config.centering,
+        new (std::nothrow) PrintBuffers{settings, config.protocol, config.paper_type, config.centering,
                                         Config::standard_paper_width_mm(config.printer_type),
-                                        config.label_length_mm, config.label_gap_mm,
+                                        config.label_length_mm, label_gap_mm,
                                         config.print_direction}};
     if (!buffers) {
         std::printf("ERROR: M3 BT print buffer allocation failed\n");
@@ -100,22 +110,33 @@ bool BluetoothPrinter::allocate_print_buffers(const Config::M3Config& config) {
         config.label_length_mm == 0 || config.label_length_mm > Config::MAX_LABEL_LENGTH_MM ||
         config.label_gap_mm > Config::MAX_LABEL_GAP_MM ||
         config.print_direction > 1 ||
-        (config.protocol == Config::PrintProtocol::Tspl &&
-         (config.paper_type != Config::PaperType::Label ||
-          config.label_gap_mm > Config::MAX_TSPL_LABEL_GAP_MM)) ||
+        (config.protocol == Config::PrintProtocol::Tspl && config.paper_type == Config::PaperType::Label &&
+         config.label_gap_mm > Config::MAX_TSPL_LABEL_GAP_MM) ||
         (config.centering != Config::CenteringMode::Printer &&
          config.centering != Config::CenteringMode::Firmware) ||
         (config.paper_type != Config::PaperType::Roll && config.paper_type != Config::PaperType::Label)) {
-        std::printf("ERROR: M3 BT invalid printer profile type=%u width=%u scale_quarters=%u\n",
+        std::printf("ERROR: M3 BT invalid profile protocol=%s paper=%s type=%u width=%u scale_quarters=%u "
+                    "media_width_mm=%u label_length_mm=%u label_gap_mm=%u direction=%u\n",
+                    protocol_name(config.protocol), paper_name(config.paper_type),
                     static_cast<unsigned>(config.printer_type),
                     static_cast<unsigned>(settings.printable_width_dots),
-                    static_cast<unsigned>(settings.image_scale_quarters));
+                    static_cast<unsigned>(settings.image_scale_quarters),
+                    static_cast<unsigned>(Config::standard_paper_width_mm(config.printer_type)),
+                    static_cast<unsigned>(config.label_length_mm), static_cast<unsigned>(config.label_gap_mm),
+                    static_cast<unsigned>(config.print_direction));
         return false;
     }
     const bool active = initialized();
     if (active) cyw43_arch_lwip_begin();
     print_buffers_ = std::move(buffers);
     if (active) cyw43_arch_lwip_end();
+    std::printf("M3 BT print buffers ready protocol=%s paper=%s media_width_mm=%u label_length_mm=%u "
+                "label_gap_mm=%u direction=%u printable_width=%u scale_quarters=%u\n",
+                protocol_name(config.protocol), paper_name(config.paper_type),
+                static_cast<unsigned>(Config::standard_paper_width_mm(config.printer_type)),
+                static_cast<unsigned>(config.label_length_mm), static_cast<unsigned>(config.label_gap_mm),
+                static_cast<unsigned>(config.print_direction), static_cast<unsigned>(settings.printable_width_dots),
+                static_cast<unsigned>(settings.image_scale_quarters));
     return true;
 }
 
@@ -316,22 +337,47 @@ void BluetoothPrinter::service() {
 bool BluetoothPrinter::start(const uint8* image, const usize size,
                              const uint8 palette, const bool first_block,
                              const bool last_block, const usize before_feed_dots,
-                             const usize after_feed_dots) {
+                             const usize after_feed_dots, const uint16 roll_label_length_mm) {
     if (!connected() || image == nullptr || size == 0) {
+        std::printf("ERROR: M3 BT print start rejected connected=%u image=%p size=%lu\n",
+                    connected() ? 1u : 0u, static_cast<const void*>(image), static_cast<unsigned long>(size));
         return false;
     }
     cyw43_arch_lwip_begin();
     auto* buffers = print_buffers_.get();
     if (buffers == nullptr || !connected() || rfcomm_cid_ == 0 || status() == PrintStatus::Printing) {
+        std::printf("ERROR: M3 BT print start unavailable buffers=%u connected=%u rfcomm_cid=%u status=%u\n",
+                    buffers != nullptr ? 1u : 0u, connected() ? 1u : 0u,
+                    static_cast<unsigned>(rfcomm_cid_), static_cast<unsigned>(status()));
         cyw43_arch_lwip_end();
         return false;
     }
     const auto& advance = buffers->advance;
+    const uint16 label_length_mm = buffers->protocol == Config::PrintProtocol::Tspl &&
+                                   buffers->paper == Config::PaperType::Roll ?
+                                       roll_label_length_mm : buffers->label_length_mm;
+    if (buffers->protocol == Config::PrintProtocol::Tspl && buffers->paper == Config::PaperType::Roll &&
+        label_length_mm == 0) {
+        std::printf("ERROR: M3 BT TSPL roll print missing per-image label length\n");
+        status_.store(PrintStatus::Error, std::memory_order_release);
+        cyw43_arch_lwip_end();
+        return false;
+    }
     if (!buffers->encoder->reset({image, size, palette, advance.image_scale_quarters, first_block, last_block,
                                   buffers->paper, before_feed_dots, after_feed_dots,
                                   advance.printable_width_dots, buffers->centering, advance.left_margin_dots,
-                                  buffers->media_width_mm, buffers->label_length_mm, buffers->label_gap_mm,
+                                  buffers->media_width_mm, label_length_mm, buffers->label_gap_mm,
                                   buffers->print_direction})) {
+        std::printf("ERROR: M3 BT encoder reset failed protocol=%s paper=%s image=%lu bytes first=%u last=%u "
+                    "palette=0x%02x scale_quarters=%u feed_before=%lu dots feed_after=%lu dots "
+                    "media_width_mm=%u label_length_mm=%u label_gap_mm=%u direction=%u printable_width=%u\n",
+                    protocol_name(buffers->protocol), paper_name(buffers->paper),
+                    static_cast<unsigned long>(size), first_block ? 1u : 0u, last_block ? 1u : 0u,
+                    static_cast<unsigned>(palette), static_cast<unsigned>(advance.image_scale_quarters),
+                    static_cast<unsigned long>(before_feed_dots), static_cast<unsigned long>(after_feed_dots),
+                    static_cast<unsigned>(buffers->media_width_mm), static_cast<unsigned>(label_length_mm),
+                    static_cast<unsigned>(buffers->label_gap_mm), static_cast<unsigned>(buffers->print_direction),
+                    static_cast<unsigned>(advance.printable_width_dots));
         status_.store(PrintStatus::Error, std::memory_order_release);
         cyw43_arch_lwip_end();
         return false;
@@ -340,6 +386,9 @@ bool BluetoothPrinter::start(const uint8* image, const usize size,
     buffers->offset = 0;
     progress_.store(0, std::memory_order_release);
     total_.store(buffers->encoder->encoded_size(), std::memory_order_release);
+    std::printf("M3 BT encoder reset OK protocol=%s paper=%s encoded=%lu bytes first=%u last=%u\n",
+                protocol_name(buffers->protocol), paper_name(buffers->paper),
+                static_cast<unsigned long>(total()), first_block ? 1u : 0u, last_block ? 1u : 0u);
     KP_BT_TRACE_DEBUG(TraceKind::JobStart, static_cast<uint32>(size),
                       static_cast<uint32>(total()));
     print_pending_.store(true, std::memory_order_release);
@@ -382,7 +431,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
                 request_can_send_now();
             }
         } else if (packet[0] == 0x08 && print_pending_.load(std::memory_order_acquire)) {
-            fail_print();
+            fail_print("printer flow-control stop");
         }
         return;
     }
@@ -425,7 +474,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
                 const bool reconnecting = connection_state_.load(std::memory_order_acquire) ==
                                           ConnectionState::Connecting;
                 if (print_pending_.load(std::memory_order_acquire)) {
-                    fail_print();
+                    fail_print("Bluetooth controller stopped during print");
                 }
                 connected_.store(false, std::memory_order_release);
                 rfcomm_cid_ = 0;
@@ -458,7 +507,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
             connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
         }
         if (print_pending_.load(std::memory_order_acquire)) {
-            fail_print();
+            fail_print("RFCOMM channel closed during print");
         }
         return;
     }
@@ -624,7 +673,7 @@ void BluetoothPrinter::handle_packet(const uint8 packet_type, const uint16 chann
             connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
         }
         if (print_pending_.load(std::memory_order_acquire)) {
-            fail_print();
+            fail_print("Bluetooth link closed during print");
         }
     }
 }
@@ -766,19 +815,27 @@ void BluetoothPrinter::send_next_chunk() {
         if (result == EncodeResult::Complete) {
             print_pending_.store(false, std::memory_order_release);
             status_.store(PrintStatus::Success, std::memory_order_release);
+            std::printf("M3 BT print stream complete protocol=%s bytes=%lu/%lu\n",
+                        protocol_name(buffers->protocol), static_cast<unsigned long>(progress()),
+                        static_cast<unsigned long>(total()));
             KP_BT_TRACE_DEBUG(TraceKind::JobComplete, static_cast<uint32>(progress()));
             return;
         }
         if (result == EncodeResult::Error) {
-            fail_print();
+            fail_print("print command encoder");
             return;
         }
     }
     const usize frame_limit = rfcomm_mtu_ == 0 ? 512 : rfcomm_mtu_;
     const usize chunk = std::min(frame_limit, buffers->length - buffers->offset);
-    if (rfcomm_send(rfcomm_cid_, buffers->tx.data() + buffers->offset, static_cast<uint16>(chunk)) !=
-        ERROR_CODE_SUCCESS) {
-        fail_print_link();
+    const uint8 send_status = rfcomm_send(rfcomm_cid_, buffers->tx.data() + buffers->offset,
+                                          static_cast<uint16>(chunk));
+    if (send_status != ERROR_CODE_SUCCESS) {
+        std::printf("ERROR: M3 BT RFCOMM send failed rc=%u chunk=%lu progress=%lu/%lu mtu=%u\n",
+                    static_cast<unsigned>(send_status), static_cast<unsigned long>(chunk),
+                    static_cast<unsigned long>(progress()), static_cast<unsigned long>(total()),
+                    static_cast<unsigned>(rfcomm_mtu_));
+        fail_print_link("RFCOMM send failed");
         return;
     }
     buffers->offset += chunk;
@@ -787,10 +844,14 @@ void BluetoothPrinter::send_next_chunk() {
 }
 
 bool BluetoothPrinter::request_can_send_now() {
-    if (rfcomm_cid_ != 0 && rfcomm_request_can_send_now_event(rfcomm_cid_) == ERROR_CODE_SUCCESS) {
+    const int result = rfcomm_cid_ != 0 ? rfcomm_request_can_send_now_event(rfcomm_cid_) : -1;
+    if (result == ERROR_CODE_SUCCESS) {
         return true;
     }
-    fail_print_link();
+    std::printf("ERROR: M3 BT RFCOMM send-window request failed rc=%d channel=%u progress=%lu/%lu\n",
+                result, static_cast<unsigned>(rfcomm_cid_), static_cast<unsigned long>(progress()),
+                static_cast<unsigned long>(total()));
+    fail_print_link("RFCOMM send-window request failed");
     return false;
 }
 
@@ -802,14 +863,17 @@ void BluetoothPrinter::fail_connection() {
     connection_state_.store(ConnectionState::Error, std::memory_order_release);
 }
 
-void BluetoothPrinter::fail_print() {
+void BluetoothPrinter::fail_print(const char* reason) {
+    std::printf("ERROR: M3 BT print failed reason=%s progress=%lu/%lu channel=%u\n", reason,
+                static_cast<unsigned long>(progress()), static_cast<unsigned long>(total()),
+                static_cast<unsigned>(rfcomm_cid_));
     trace(TraceKind::Failure, rfcomm_cid_, rfcomm_server_channel_);
     print_pending_.store(false, std::memory_order_release);
     status_.store(PrintStatus::Error, std::memory_order_release);
 }
 
-void BluetoothPrinter::fail_print_link() {
-    fail_print();
+void BluetoothPrinter::fail_print_link(const char* reason) {
+    fail_print(reason);
     connected_.store(false, std::memory_order_release);
     connection_state_.store(ConnectionState::Error, std::memory_order_release);
     close_link();

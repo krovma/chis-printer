@@ -105,9 +105,11 @@ int main() {
     assert(image.load("00001.gbr"));
     assert(image.size() == 320 && image.data()[0] == 0xA5);
     assert(image.source_rows() == 8 && image.inner_margin_rows() == 0);
+    assert(image.print_rows() == 40);
     assert(image.print_control() == Gbr::Format::DEFAULT_PRINT_CONTROL);
     assert(image.load("photo.GBR"));
     assert(image.print_control() == control);
+    assert(image.print_rows() == 128);
     const Gbr::Format::PrintControl second_control{0, 0x21, 0x1B, 0x00};
     const auto file_header = Gbr::Format::make_gbr_file_header(2);
     const auto first_block = Gbr::Format::make_gbr_block_header(160, 8, control);
@@ -121,6 +123,7 @@ int main() {
     assert(image.load("multi.gbr"));
     assert(image.block_count() == 2 && image.block_index() == 0 && image.total_size() == 640);
     assert(image.source_rows() == 16 && image.inner_margin_rows() == 56);
+    assert(image.print_rows() == 160);
     assert(image.size() == 320 && image.data()[0] == 0xA5 && image.print_control() == control);
     assert(image.next_block());
     assert(image.block_index() == 1 && image.data()[0] == 0x5A);
@@ -139,7 +142,7 @@ int main() {
     files["0:/DCIM/truncated.gbr"] = multi;
     files["0:/DCIM/truncated.gbr"].pop_back();
     assert(!image.load("truncated.gbr"));
-    assert(!image.load("bad.gbr") && image.data() == nullptr);
+    assert(!image.load("bad.gbr") && image.data() == nullptr && image.print_rows() == 0);
     assert(!image.load("../photo.GBR"));
     catalog.clear();
     assert(catalog.count() == 0);

@@ -31,6 +31,8 @@ extern CVar<uint16> label_gap_mm;
 
 M3Config current_m3_config();
 bool set_m3_image_scale(uint8 scale_quarters, WriteMode mode);
+// Returns the CVar for a supported combination. ESC/POS ignores direction.
+CVar<uint16>* find_m3_left_margin_var(PrinterType type, uint8 scale_quarters, PrintProtocol protocol, uint8 direction);
 bool set_m3_left_margin_dots(uint16 dots, WriteMode mode);
 
 }  // namespace Config::Vars

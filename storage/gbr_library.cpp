@@ -119,6 +119,8 @@ void GbrImage::clear() {
     total_size_ = 0;
     source_rows_ = 0;
     inner_margin_rows_ = 0;
+    first_margin_rows_ = 0;
+    last_margin_rows_ = 0;
     block_count_ = 0;
     block_index_ = 0;
     first_block_offset_ = 0;
@@ -222,10 +224,13 @@ bool GbrImage::load(const char* filename) {
                 const uint8 margins = header[5];
                 if (index != 0) {
                     inner_margin_rows_ += static_cast<usize>(previous_after_margin + (margins >> 4)) * 8;
+                } else {
+                    first_margin_rows_ = static_cast<usize>(margins >> 4) * 8;
                 }
                 previous_after_margin = margins & 0x0f;
             }
         }
+        last_margin_rows_ = static_cast<usize>(previous_after_margin) * 8;
         valid = valid && file_.fptr == f_size(&file_) &&
                 f_lseek(&file_, first_block_offset_) == FR_OK && read_block();
     } else if (valid && (prefix[4] == 1 || prefix[4] == Gbr::Format::GBR_BLOCK_VERSION)) {
@@ -248,6 +253,8 @@ bool GbrImage::load(const char* filename) {
         if (valid) {
             total_size_ = payload_size;
             source_rows_ = payload_size / (Gbr::Format::GBR_WIDTH / 4);
+            first_margin_rows_ = static_cast<usize>(header[5] >> 4) * 8;
+            last_margin_rows_ = static_cast<usize>(header[5] & 0x0f) * 8;
             for (usize i = 0; i < print_control_.size(); ++i) {
                 print_control_[i] = header[4 + i];
             }

@@ -280,7 +280,7 @@ bool encode_scale(const uint8& value, char* output, const usize capacity) {
 }
 
 bool normalize_left_margin(uint16& value) {
-    return value == AUTO_LEFT_MARGIN || value <= MAX_LEFT_MARGIN_DOTS;
+    return value <= MAX_LEFT_MARGIN_DOTS;
 }
 
 }  // namespace
@@ -324,74 +324,66 @@ CVar<uint16> printable_width_37mm{"m3.advance.printable_width_dots_37mm", 0,
     decode_width<PrinterType::Mm37>, clamp_width<PrinterType::Mm37>, encode_integer<uint16>};
 CVar<uint8> image_scale_37mm{"m3.advance.image_scale_37mm", 0,
     decode_scale<PrinterType::Mm37>, normalize_scale<PrinterType::Mm37>, encode_scale};
-CVar<uint16> left_margin_37mm_1x{"m3.advance.left_margin_dots_37mm_1x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_37mm_1_5x{"m3.advance.left_margin_dots_37mm_1_5x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
 CVar<uint16> printable_width_58mm{"m3.advance.printable_width_dots_58mm", 0,
     decode_width<PrinterType::Mm58>, clamp_width<PrinterType::Mm58>, encode_integer<uint16>};
 CVar<uint8> image_scale_58mm{"m3.advance.image_scale_58mm", 0,
     decode_scale<PrinterType::Mm58>, normalize_scale<PrinterType::Mm58>, encode_scale};
-CVar<uint16> left_margin_58mm_1x{"m3.advance.left_margin_dots_58mm_1x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_58mm_1_5x{"m3.advance.left_margin_dots_58mm_1_5x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_58mm_2x{"m3.advance.left_margin_dots_58mm_2x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
 CVar<uint16> printable_width_80mm{"m3.advance.printable_width_dots_80mm", 0,
     decode_width<PrinterType::Mm80>, clamp_width<PrinterType::Mm80>, encode_integer<uint16>};
 CVar<uint8> image_scale_80mm{"m3.advance.image_scale_80mm", 0,
     decode_scale<PrinterType::Mm80>, normalize_scale<PrinterType::Mm80>, encode_scale};
-CVar<uint16> left_margin_80mm_1x{"m3.advance.left_margin_dots_80mm_1x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_80mm_2x{"m3.advance.left_margin_dots_80mm_2x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_80mm_3x{"m3.advance.left_margin_dots_80mm_3x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
 CVar<uint16> printable_width_110mm{"m3.advance.printable_width_dots_110mm", 0,
     decode_width<PrinterType::Mm110>, clamp_width<PrinterType::Mm110>, encode_integer<uint16>};
 CVar<uint8> image_scale_110mm{"m3.advance.image_scale_110mm", 0,
     decode_scale<PrinterType::Mm110>, normalize_scale<PrinterType::Mm110>, encode_scale};
-CVar<uint16> left_margin_110mm_1x{"m3.advance.left_margin_dots_110mm_1x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_110mm_2x{"m3.advance.left_margin_dots_110mm_2x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_110mm_3x{"m3.advance.left_margin_dots_110mm_3x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_110mm_4x{"m3.advance.left_margin_dots_110mm_4x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
-CVar<uint16> left_margin_110mm_5x{"m3.advance.left_margin_dots_110mm_5x", AUTO_LEFT_MARGIN,
-    decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>, normalize_left_margin, encode_integer<uint16>};
 
-CVar<uint16>* left_margin_slot(const PrinterType type, const uint8 scale_quarters) {
-    switch (type) {
-        case PrinterType::Mm37:
-            if (scale_quarters == SCALE_1X) return &left_margin_37mm_1x;
-            if (scale_quarters == SCALE_1_5X) return &left_margin_37mm_1_5x;
-            break;
-        case PrinterType::Mm58:
-            if (scale_quarters == SCALE_1X) return &left_margin_58mm_1x;
-            if (scale_quarters == SCALE_1_5X) return &left_margin_58mm_1_5x;
-            if (scale_quarters == SCALE_2X) return &left_margin_58mm_2x;
-            break;
-        case PrinterType::Mm80:
-            if (scale_quarters == SCALE_1X) return &left_margin_80mm_1x;
-            if (scale_quarters == SCALE_2X) return &left_margin_80mm_2x;
-            if (scale_quarters == SCALE_3X) return &left_margin_80mm_3x;
-            break;
-        case PrinterType::Mm110:
-            if (scale_quarters == SCALE_1X) return &left_margin_110mm_1x;
-            if (scale_quarters == SCALE_2X) return &left_margin_110mm_2x;
-            if (scale_quarters == SCALE_3X) return &left_margin_110mm_3x;
-            if (scale_quarters == SCALE_4X) return &left_margin_110mm_4x;
-            if (scale_quarters == SCALE_5X) return &left_margin_110mm_5x;
-            break;
-        case PrinterType::Count: break;
+CVar<uint16> make_left_margin_var(const char* key, const char* legacy_key) {
+    return {key, AUTO_LEFT_MARGIN, decode_integer<uint16, 0, MAX_LEFT_MARGIN_DOTS>,
+            normalize_left_margin, encode_integer<uint16>, legacy_key};
+}
+
+struct LeftMarginVariables {
+    PrinterType type;
+    uint8 scale_quarters;
+    CVar<uint16> escpos;
+    std::array<CVar<uint16>, 2> tspl;
+};
+
+#define KP_LEFT_MARGIN_VARIABLES(suffix) \
+    make_left_margin_var("m3.left_margin_dots.escpos." suffix, "m3.advance.left_margin_dots_" suffix), \
+    {{make_left_margin_var("m3.left_margin_dots.tspl_dir0." suffix, "m3.advance.left_margin_dots_" suffix), \
+      make_left_margin_var("m3.left_margin_dots.tspl_dir1." suffix, "m3.advance.left_margin_dots_" suffix)}}
+
+LeftMarginVariables left_margin_variables[]{
+    {PrinterType::Mm37,  SCALE_1X,   KP_LEFT_MARGIN_VARIABLES("37mm_1x")},
+    {PrinterType::Mm37,  SCALE_1_5X, KP_LEFT_MARGIN_VARIABLES("37mm_1_5x")},
+    {PrinterType::Mm58,  SCALE_1X,   KP_LEFT_MARGIN_VARIABLES("58mm_1x")},
+    {PrinterType::Mm58,  SCALE_1_5X, KP_LEFT_MARGIN_VARIABLES("58mm_1_5x")},
+    {PrinterType::Mm58,  SCALE_2X,   KP_LEFT_MARGIN_VARIABLES("58mm_2x")},
+    {PrinterType::Mm80,  SCALE_1X,   KP_LEFT_MARGIN_VARIABLES("80mm_1x")},
+    {PrinterType::Mm80,  SCALE_2X,   KP_LEFT_MARGIN_VARIABLES("80mm_2x")},
+    {PrinterType::Mm80,  SCALE_3X,   KP_LEFT_MARGIN_VARIABLES("80mm_3x")},
+    {PrinterType::Mm110, SCALE_1X,   KP_LEFT_MARGIN_VARIABLES("110mm_1x")},
+    {PrinterType::Mm110, SCALE_2X,   KP_LEFT_MARGIN_VARIABLES("110mm_2x")},
+    {PrinterType::Mm110, SCALE_3X,   KP_LEFT_MARGIN_VARIABLES("110mm_3x")},
+    {PrinterType::Mm110, SCALE_4X,   KP_LEFT_MARGIN_VARIABLES("110mm_4x")},
+    {PrinterType::Mm110, SCALE_5X,   KP_LEFT_MARGIN_VARIABLES("110mm_5x")},
+};
+
+#undef KP_LEFT_MARGIN_VARIABLES
+
+}  // namespace
+
+CVar<uint16>* find_m3_left_margin_var(const PrinterType type, const uint8 scale_quarters,
+                                    const PrintProtocol protocol, const uint8 direction) {
+    for (auto& margins : left_margin_variables) {
+        if (margins.type != type || margins.scale_quarters != scale_quarters) continue;
+        if (protocol == PrintProtocol::EscPos) return &margins.escpos;
+        if (protocol == PrintProtocol::Tspl && direction < margins.tspl.size()) return &margins.tspl[direction];
+        break;
     }
     return nullptr;
 }
-
-}  // namespace
 
 M3Config current_m3_config() {
     M3Config config{};
@@ -399,17 +391,19 @@ M3Config current_m3_config() {
     config.pin = pin.get();
     config.printer_type = printer_type.get();
     config.paper_type = paper_type.get();
-    config.protocol = config.paper_type == PaperType::Label ? print_protocol.get() : PrintProtocol::EscPos;
+    config.protocol = print_protocol.get();
     config.print_direction = print_direction.get();
     config.centering = centering.get();
     config.label_length_mm = label_length_mm.get();
-    config.label_gap_mm = label_gap_mm.get();
+    config.label_gap_mm = config.paper_type == PaperType::Roll && config.protocol == PrintProtocol::Tspl ?
+        0 : label_gap_mm.get();
     config.advance.mm37 = {printable_width_37mm.get(), image_scale_37mm.get()};
     config.advance.mm58 = {printable_width_58mm.get(), image_scale_58mm.get()};
     config.advance.mm80 = {printable_width_80mm.get(), image_scale_80mm.get()};
     config.advance.mm110 = {printable_width_110mm.get(), image_scale_110mm.get()};
     const auto scale_quarters = config.resolved_advance().image_scale_quarters;
-    const auto* margin = left_margin_slot(config.printer_type, scale_quarters);
+    const auto* margin = find_m3_left_margin_var(config.printer_type, scale_quarters,
+                                               config.protocol, config.print_direction);
     if (margin != nullptr) {
         switch (config.printer_type) {
             case PrinterType::Mm37: config.advance.mm37.left_margin_dots = margin->get(); break;
@@ -438,9 +432,9 @@ bool set_m3_image_scale(const uint8 scale_quarters, const WriteMode mode) {
 }
 
 bool set_m3_left_margin_dots(const uint16 dots, const WriteMode mode) {
-    if (dots > MAX_LEFT_MARGIN_DOTS) return false;
-    const auto scale_quarters = current_m3_config().resolved_advance().image_scale_quarters;
-    auto* margin = left_margin_slot(printer_type.get(), scale_quarters);
+    const auto config = current_m3_config();
+    auto* margin = find_m3_left_margin_var(config.printer_type, config.resolved_advance().image_scale_quarters,
+                                         config.protocol, config.print_direction);
     return margin != nullptr && margin->set(dots, mode);
 }
 

@@ -8,9 +8,24 @@
 
 namespace BtPrinter {
 
+inline constexpr uint16 TSPL_ROLL_EXTRA_LENGTH_MM = 15;
+
 // 203 dpi = 2030 / 254 dots per millimeter, rounded to the nearest dot.
 constexpr usize millimeters_to_dots(const uint16 millimeters) {
     return (static_cast<usize>(millimeters) * 2030u + 127u) / 254u;
+}
+
+constexpr bool tspl_roll_label_length_mm(const usize print_rows, const uint8 scale_quarters,
+                                         uint16& length_mm) {
+    const usize image_height_dots = Config::scaled_dots(print_rows, scale_quarters);
+    // Invert millimeters_to_dots so the TSPL SIZE value rounds back to the raster height.
+    const usize image_height_mm = (image_height_dots * 254u + 1902u) / 2030u;
+    const usize total_length_mm = image_height_mm + TSPL_ROLL_EXTRA_LENGTH_MM;
+    if (scale_quarters == 0 || total_length_mm > Config::MAX_LABEL_LENGTH_MM) {
+        return false;
+    }
+    length_mm = static_cast<uint16>(total_length_mm);
+    return true;
 }
 
 struct LabelLayout {

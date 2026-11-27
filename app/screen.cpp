@@ -221,13 +221,6 @@ bool draw_m3_pairing(const uint8 selection) {
            centered("Left back", 207);
 }
 
-bool draw_bluetooth_status(const std::string_view status) {
-    std::string text = Display::Ui::translate("Bluetooth");
-    text.push_back(' ');
-    text += Display::Ui::translate(status);
-    return Display::Ui::draw_utf8(text, 4, 2, BLACK);
-}
-
 bool draw_file_list(const Storage::GbrCatalog& catalog, const usize selection, const bool bluetooth) {
     Display::clear(WHITE);
     if (!centered(bluetooth ? "BT files" : "GBR files", 22)) {

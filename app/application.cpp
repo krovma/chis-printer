@@ -21,6 +21,7 @@
 #include "app/screen.h"
 #include "app/settings.h"
 #include "app/state_machine.h"
+#include "app/status_bar.h"
 #include "btprinter/bluetooth_printer.h"
 #include "btprinter/print_layout.h"
 #include "config/variables.h"
@@ -32,6 +33,7 @@
 #include "gbp/terminal/screen.h"
 #include "gbp/terminal/worker.h"
 #include "pin_config.h"
+#include "power/battery_monitor.h"
 #include "storage/gbr_library.h"
 #include "storage/gbr_store.h"
 #include "storage/sd_card.h"
@@ -53,6 +55,14 @@ constexpr uint8 KEY_DOWN_MASK = 1u << 1;
 constexpr uint8 KEY_CONFIRM_MASK = 1u << 2;
 constexpr uint8 KEY_LEFT_MASK = 1u << 3;
 constexpr uint8 KEY_UP_MASK = 1u << 4;
+
+const char* print_protocol_name(const Config::PrintProtocol protocol) {
+    return protocol == Config::PrintProtocol::Tspl ? "TSPL" : "ESC/POS";
+}
+
+const char* paper_type_name(const Config::PaperType paper) {
+    return paper == Config::PaperType::Label ? "label" : "roll";
+}
 
 Gbp::Terminal::Worker worker;
 alignas(8) std::array<uint32, 1024> worker_stack{};
@@ -157,11 +167,12 @@ class Application {
 
     [[noreturn]] void run() {
         storage_ready_ = card_mounted_ && store_.initialize();
+        battery_.initialize();
         Display::Ui::initialize(Config::Vars::locale.get());
         Display::init();
         Display::set_palette_key(Config::Vars::palette.get());
         apply_initial_backlight();
-        render();
+        render(battery_.poll());
         keys_.initialize();
 
         absolute_time_t next_sram_report = make_timeout_time_ms(1000);
@@ -225,7 +236,7 @@ class Application {
                 update_m13();
             }
             handle_key(keys_.poll());
-            render();
+            render(battery_.poll());
             tight_loop_contents();
         }
     }
@@ -419,6 +430,20 @@ class Application {
         const bool m13 = mode == Mode::M13;
         const char* mode_name = m13 ? "M1+3" : "M3";
         const auto config = Config::Vars::current_m3_config();
+        const auto requested_protocol = Config::Vars::print_protocol.get();
+        const auto advance = config.resolved_advance();
+        printf("%s print profile paper=%s requested_protocol=%s effective_protocol=%s printer=%s "
+               "printable_width=%u scale=%u/4 direction=%u centering=%u configured_length=%u mm gap=%u mm\n",
+               mode_name, paper_type_name(config.paper_type), print_protocol_name(requested_protocol),
+               print_protocol_name(config.protocol), Config::PRINTER_TYPE_NAMES[static_cast<usize>(config.printer_type)],
+               static_cast<unsigned>(advance.printable_width_dots),
+               static_cast<unsigned>(advance.image_scale_quarters), static_cast<unsigned>(config.print_direction),
+               static_cast<unsigned>(config.centering), static_cast<unsigned>(config.label_length_mm),
+               static_cast<unsigned>(config.label_gap_mm));
+        if (config.paper_type == Config::PaperType::Roll && requested_protocol == Config::PrintProtocol::Tspl) {
+            printf("%s print profile: TSPL roll uses GAP 0 mm and per-image SIZE length=printed image height + %u mm\n",
+                   mode_name, static_cast<unsigned>(BtPrinter::TSPL_ROLL_EXTRA_LENGTH_MM));
+        }
         if (!bt_printer_.allocate_print_buffers(config)) {
             menu_error_ = m13 ? "M1+3 error" : "BT print error";
             state_.menu_failed();
@@ -470,7 +495,9 @@ class Application {
 
     bool start_bt_block(const bool first, const usize previous_after_rows = 0) {
         const bool last = image_.block_index() + 1 == image_.block_count();
-        const uint8 scale_quarters = Config::Vars::current_m3_config().resolved_advance().image_scale_quarters;
+        const auto config = Config::Vars::current_m3_config();
+        const auto advance = config.resolved_advance();
+        const uint8 scale_quarters = advance.image_scale_quarters;
         const usize current_before_rows = static_cast<usize>(image_.print_control()[1] >> 4) * 8;
         const usize current_after_rows = static_cast<usize>(image_.print_control()[1] & 0x0f) * 8;
         // Keep GBR margins on roll paper; label paper replaces only the outer margins.
@@ -482,8 +509,24 @@ class Application {
             after_dots = last ? label_layout_.bottom_dots +
                 BtPrinter::millimeters_to_dots(Config::Vars::label_gap_mm.get()) : 0;
         }
+        uint16 roll_label_length_mm = 0;
+        if (config.protocol == Config::PrintProtocol::Tspl && config.paper_type == Config::PaperType::Roll &&
+            !BtPrinter::tspl_roll_label_length_mm(image_.print_rows(), scale_quarters, roll_label_length_mm)) {
+            printf("ERROR: M3 TSPL roll image is too long rows=%lu scale_quarters=%u maximum_label_length=%u mm\n",
+                   static_cast<unsigned long>(image_.print_rows()), static_cast<unsigned>(scale_quarters),
+                   static_cast<unsigned>(Config::MAX_LABEL_LENGTH_MM));
+            return false;
+        }
+        printf("M3 print block %lu/%lu prepare protocol=%s paper=%s image=%lu bytes palette=0x%02x "
+               "scale=%u/4 feed_before=%lu dots feed_after=%lu dots label_length=%u mm\n",
+               static_cast<unsigned long>(image_.block_index() + 1),
+               static_cast<unsigned long>(image_.block_count()), print_protocol_name(config.protocol),
+               paper_type_name(config.paper_type), static_cast<unsigned long>(image_.size()),
+               static_cast<unsigned>(image_.palette()), static_cast<unsigned>(scale_quarters),
+               static_cast<unsigned long>(before_dots), static_cast<unsigned long>(after_dots),
+               static_cast<unsigned>(roll_label_length_mm != 0 ? roll_label_length_mm : config.label_length_mm));
         return bt_printer_.start(image_.data(), image_.size(), image_.palette(),
-                                 first, last, before_dots, after_dots);
+                                 first, last, before_dots, after_dots, roll_label_length_mm);
     }
 
     bool select_first_print_block() {
@@ -830,6 +873,9 @@ class Application {
                 state_.print_finished(true);
             }
         } else if (status == BtPrinter::PrintStatus::Error) {
+            printf("ERROR: M3 BT print ended with encoder/transport error bytes=%lu/%lu\n",
+                   static_cast<unsigned long>(bt_printer_.progress()),
+                   static_cast<unsigned long>(bt_printer_.total()));
             error_text_ = "BT print error";
             image_.clear();
             state_.print_finished(false);
@@ -1003,6 +1049,11 @@ class Application {
         return false;
     }
 
+    bool draw_file_preview() {
+        Gbp::Terminal::draw_preview(image_.data(), image_.size(), Gbr::Format::preview_palette(image_.palette()));
+        return Screen::draw_block_indicator(image_.block_index(), image_.block_count());
+    }
+
     bool draw_screen(const Gbp::Terminal::M1State::Snapshot& snapshot) {
         switch (state_.mode()) {
             case Mode::Menu:
@@ -1017,10 +1068,7 @@ class Application {
             case Mode::M2:
                 switch (state_.m2_page()) {
                     case M2Page::List: return Screen::draw_file_list(catalog_, state_.selected_file());
-                    case M2Page::Preview:
-                        Gbp::Terminal::draw_preview(image_.data(), image_.size(),
-                                                    Gbr::Format::preview_palette(image_.palette()));
-                        return Screen::draw_block_indicator(image_.block_index(), image_.block_count());
+                    case M2Page::Preview: return draw_file_preview();
                     case M2Page::Printing:
                         return Screen::draw_printing(printed_bytes_ + worker.print_progress(), image_.total_size());
                     case M2Page::LabelWarning: return false;
@@ -1037,10 +1085,7 @@ class Application {
                     case M3Page::Files:
                         switch (state_.m2_page()) {
                             case M2Page::List: return Screen::draw_file_list(catalog_, state_.selected_file(), true);
-                            case M2Page::Preview:
-                                Gbp::Terminal::draw_preview(image_.data(), image_.size(),
-                                                            Gbr::Format::preview_palette(image_.palette()));
-                                return Screen::draw_block_indicator(image_.block_index(), image_.block_count());
+                            case M2Page::Preview: return draw_file_preview();
                             case M2Page::Printing:
                                 return Screen::draw_printing(bt_printer_.progress(), bt_printer_.total(), true);
                             case M2Page::LabelWarning:
@@ -1062,30 +1107,24 @@ class Application {
         return false;
     }
 
-    void render() {
-        if (!dirty_ || Display::is_presenting()) {
+    void render(const Power::BatteryStatus battery) {
+        if ((!dirty_ && battery == drawn_battery_) || Display::is_presenting()) {
+            return;
+        }
+        const auto snapshot = dirty_ && m1_ ? m1_->snapshot(time_us_32()) : Gbp::Terminal::M1State::Snapshot{};
+        if (dirty_ && !draw_screen(snapshot)) {
+            return;
+        }
+        if (!StatusBar::draw(bt_printer_.connection_state(), battery) || !Display::present()) {
+            return;
+        }
+        drawn_battery_ = battery;
+        if (!dirty_) {
             return;
         }
 #if defined(KP_BT_DEBUG)
         const bool entering_m3_display = drawn_mode_ != Mode::M3 && state_.mode() == Mode::M3;
 #endif
-        const auto snapshot = m1_ ? m1_->snapshot(time_us_32()) : Gbp::Terminal::M1State::Snapshot{};
-        if (!draw_screen(snapshot)) {
-            return;
-        }
-        std::string_view bluetooth_status = "Disconnected";
-        switch (bt_printer_.connection_state()) {
-            case BtPrinter::ConnectionState::Disconnected: break;
-            case BtPrinter::ConnectionState::Connecting: bluetooth_status = "Connecting"; break;
-            case BtPrinter::ConnectionState::Connected: bluetooth_status = "Connected"; break;
-            case BtPrinter::ConnectionState::Error: bluetooth_status = "Pair failed"; break;
-        }
-        if (!Screen::draw_bluetooth_status(bluetooth_status)) {
-            return;
-        }
-        if (!Display::present()) {
-            return;
-        }
         drawn_mode_ = state_.mode();
         if (drawn_mode_ == Mode::M1) {
             drawn_m1_ = snapshot;
@@ -1127,6 +1166,8 @@ class Application {
     bool worker_started_ = false;
     BtPrinter::BluetoothPrinter bt_printer_{};
     BtPrinter::ConnectionState drawn_connection_state_ = BtPrinter::ConnectionState::Disconnected;
+    Power::BatteryMonitor battery_{};
+    Power::BatteryStatus drawn_battery_{};
     StateMachine state_{};
     KeyScanner keys_{};
     Storage::GbrStore store_{};

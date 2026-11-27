@@ -51,7 +51,8 @@ int main() {
     assert(set_setting_value(Setting::Protocol, static_cast<uint32>(Config::PrintProtocol::Tspl),
                              Config::WriteMode::RuntimeOnly));
     assert(setting_value(Setting::Protocol) == static_cast<uint32>(Config::PrintProtocol::Tspl));
-    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::EscPos);
+    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::Tspl);
+    assert(Config::Vars::current_m3_config().label_gap_mm == 0);
     assert(set_setting_value(Setting::PrintDirection, 0, Config::WriteMode::RuntimeOnly));
     assert(Config::Vars::print_direction.get() == 0);
     assert(set_setting_value(Setting::PrintDirection, 1, Config::WriteMode::RuntimeOnly));

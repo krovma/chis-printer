@@ -19,7 +19,6 @@
 namespace Storage {
 namespace {
 
-constexpr usize MAX_CONFIG_BYTES = 4096;
 constexpr const char* CONFIG_PATH = "0:/config.toml";
 constexpr const char* CONFIG_TEMP_PATH = "0:/config.tmp";
 constexpr const char* CONFIG_BACKUP_PATH = "0:/config.bak";

@@ -114,6 +114,8 @@ add_executable(kuper-printer
     app/settings.h
     app/state_machine.cpp
     app/state_machine.h
+    app/status_bar.cpp
+    app/status_bar.h
     btprinter/bluetooth_printer.cpp
     btprinter/bluetooth_printer.h
     btprinter/dither.cpp
@@ -165,6 +167,8 @@ add_executable(kuper-printer
     gbp/terminal/worker.h
     main.cpp
     pin_config.h
+    power/battery_monitor.cpp
+    power/battery_monitor.h
     ${FONT_HEADER}
     ${ICON_HEADER}
     resource/text/display_texts.h

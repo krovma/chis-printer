@@ -29,8 +29,8 @@ struct PrintBlock {
 
 enum class EncodeResult : uint8 { Chunk, Complete, Error };
 
-// Command encoding is independent of the RFCOMM transport. A future TSPL
-// implementation can supply another encoder without changing the send loop.
+// Command encoding is independent of the RFCOMM transport so ESC/POS and TSPL
+// use the same send loop.
 class PrintCommandEncoder {
   public:
     virtual ~PrintCommandEncoder() = default;

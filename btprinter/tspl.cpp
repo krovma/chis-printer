@@ -29,13 +29,15 @@ bool TsplRasterEncoder::reset(const PrintBlock& block) {
 
     const auto* strategy = dither_strategy(block.scale_quarters);
     const usize width = Config::scaled_dots(SOURCE_WIDTH, block.scale_quarters);
+    const uint16 gap_mm = block.paper == Config::PaperType::Roll ? 0 : block.label_gap_mm;
     if (block.data == nullptr || block.size == 0 || block.size % BYTES_PER_TILE_ROW != 0 ||
         block.size / BYTES_PER_TILE_ROW > 4095 || strategy == nullptr || width == 0 ||
-        width > MAX_OUTPUT_WIDTH || width % 8 != 0 || block.paper != Config::PaperType::Label ||
+        width > MAX_OUTPUT_WIDTH || width % 8 != 0 ||
+        (block.paper != Config::PaperType::Label && block.paper != Config::PaperType::Roll) ||
         block.print_direction > 1 ||
         block.media_width_mm == 0 || block.label_length_mm == 0 ||
         block.label_length_mm > Config::MAX_LABEL_LENGTH_MM ||
-        block.label_gap_mm > Config::MAX_TSPL_LABEL_GAP_MM ||
+        (block.paper == Config::PaperType::Label && gap_mm > Config::MAX_TSPL_LABEL_GAP_MM) ||
         block.printable_width_dots == 0) {
         return false;
     }
@@ -71,7 +73,7 @@ bool TsplRasterEncoder::reset(const PrintBlock& block) {
                                       "SIZE %u mm,%u mm\r\nGAP %u mm,0 mm\r\nDIRECTION %u\r\nCLS\r\n",
                                       static_cast<unsigned>(block.media_width_mm),
                                       static_cast<unsigned>(block.label_length_mm),
-                                      static_cast<unsigned>(block.label_gap_mm),
+                                      static_cast<unsigned>(gap_mm),
                                       static_cast<unsigned>(block.print_direction));
     }
     const int bitmap_header_length = std::snprintf(

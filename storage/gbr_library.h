@@ -48,6 +48,7 @@ class GbrImage {
     usize total_size() const { return total_size_; }
     usize source_rows() const { return source_rows_; }
     usize inner_margin_rows() const { return inner_margin_rows_; }
+    usize print_rows() const { return source_rows_ + inner_margin_rows_ + first_margin_rows_ + last_margin_rows_; }
     usize block_count() const { return block_count_; }
     usize block_index() const { return block_index_; }
     uint8 palette() const { return print_control_[2]; }
@@ -65,6 +66,8 @@ class GbrImage {
     usize total_size_ = 0;
     usize source_rows_ = 0;
     usize inner_margin_rows_ = 0;
+    usize first_margin_rows_ = 0;
+    usize last_margin_rows_ = 0;
     usize block_count_ = 0;
     usize block_index_ = 0;
     FSIZE_t first_block_offset_ = 0;

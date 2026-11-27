@@ -12,6 +12,7 @@
 #include "config/cvar.h"
 #include "config/toml_document.h"
 #include "config/variables.h"
+#include "storage/sd_card.h"
 
 namespace Fixture {
 std::string document;
@@ -28,7 +29,7 @@ bool read_config_text(std::string_view& output) {
 
 bool write_config_value(const std::string_view path, const std::string_view value) {
     if (!Fixture::writable) return false;
-    std::array<char, 4096> updated{};
+    std::array<char, MAX_CONFIG_BYTES> updated{};
     usize size = 0;
     if (!Config::update_toml_value(Fixture::document, path, value,
                                    updated.data(), updated.size(), size)) return false;
@@ -71,19 +72,20 @@ bool encode_test(const uint8& value, char* output, const usize capacity) {
 
 void test_registration() {
     auto& controller = Config::Controller::instance();
-    assert(controller.registered_count() == 36);
+    constexpr usize variable_count = 62;
+    assert(controller.registered_count() == variable_count);
     assert(controller.find("m3.pin") == &Config::Vars::pin);
     assert(controller.find("m3.label_gap_mm") == &Config::Vars::label_gap_mm);
     assert(controller.find("m3.print_direction") == &Config::Vars::print_direction);
     assert(controller.find("missing") == nullptr);
     {
         Config::CVar<uint8> temporary{"test.value", 3, decode_test, clamp_test, encode_test};
-        assert(controller.registered_count() == 37);
+        assert(controller.registered_count() == variable_count + 1);
         assert(controller.find("test.value") == &temporary);
         assert(temporary.set(20));
         assert(temporary.get() == 10);
     }
-    assert(controller.registered_count() == 36);
+    assert(controller.registered_count() == variable_count);
     assert(controller.find("test.value") == nullptr);
 }
 
@@ -139,9 +141,11 @@ void test_loading() {
     assert(fallback.label_length_mm == 50);
     assert(fallback.label_gap_mm == 0);
 
-    assert(controller.load_text("format_version = 1\n[m3]\nprotocol = \"tspl\"\n"));
+    assert(controller.load_text("format_version = 1\n[m3]\nprotocol = \"tspl\"\nlabel_gap_mm = 50\n"));
     assert(Config::Vars::print_protocol.get() == Config::PrintProtocol::Tspl);
-    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::EscPos);
+    assert(Config::Vars::label_gap_mm.get() == 50);
+    assert(Config::Vars::current_m3_config().protocol == Config::PrintProtocol::Tspl);
+    assert(Config::Vars::current_m3_config().label_gap_mm == 0);
 
     assert(controller.load_text("format_version = 1\n[m3]\nprinter_type = \"110mm\"\n"
                                 "paper_type = \"label\"\nlabel_length_mm = 100\nprotocol = \"escpos\"\n"
@@ -311,7 +315,8 @@ void test_fractional_scale_and_margin_slots() {
     assert(advance.image_scale_quarters == Config::SCALE_1_5X);
     assert(advance.left_margin_dots == 7);
     assert(set_m3_left_margin_dots(9, persist));
-    assert(Fixture::document.find("left_margin_dots_37mm_1_5x = 9") != std::string::npos);
+    assert(Fixture::document.find("[m3.left_margin_dots.escpos]\n37mm_1_5x = 9") != std::string::npos);
+    assert(Fixture::document.find("left_margin_dots_37mm_1_5x = 7") != std::string::npos);
     Fixture::writable = false;
     assert(!set_m3_left_margin_dots(10, persist));
     Fixture::writable = true;
@@ -332,6 +337,12 @@ void test_fractional_scale_and_margin_slots() {
     assert(current_m3_config().resolved_advance().left_margin_dots == 9);
     assert(controller.reload());
     assert(current_m3_config().resolved_advance().left_margin_dots == 9);
+    assert(print_protocol.set(Config::PrintProtocol::Tspl));
+    assert(print_direction.set(0));
+    assert(current_m3_config().resolved_advance().left_margin_dots == 7);
+    assert(print_direction.set(1));
+    assert(current_m3_config().resolved_advance().left_margin_dots == 7);
+    assert(print_protocol.set(Config::PrintProtocol::EscPos));
     assert(printer_type.set(Config::PrinterType::Mm110));
     assert(current_m3_config().resolved_advance().left_margin_dots == 30);
 
@@ -356,6 +367,8 @@ void test_fractional_scale_and_margin_slots() {
 }
 
 void test_all_margin_slots() {
+    using Config::PrintProtocol;
+    using Config::PrinterType;
     using namespace Config::Vars;
     constexpr auto persist = Config::WriteMode::RuntimeAndToml;
     constexpr auto runtime = Config::WriteMode::RuntimeOnly;
@@ -375,19 +388,49 @@ void test_all_margin_slots() {
         {Config::PrinterType::Mm110, Config::SCALE_4X, 11},
         {Config::PrinterType::Mm110, Config::SCALE_5X, 12},
     };
-    Fixture::document = "format_version = 1\n[m3]\nprinter_type = \"37mm\"\n";
+    struct Mode { PrintProtocol protocol; uint8 direction; uint16 offset; };
+    constexpr Mode modes[]{
+        {PrintProtocol::EscPos, 0, 0},
+        {PrintProtocol::Tspl, 0, 100},
+        {PrintProtocol::Tspl, 1, 200},
+    };
+    std::ifstream example{"config.example.toml", std::ios::binary};
+    assert(example);
+    Fixture::document.assign(std::istreambuf_iterator<char>{example}, std::istreambuf_iterator<char>{});
+    constexpr usize legacy_config_limit = 4096;
+    assert(Fixture::document.size() + 3 <= legacy_config_limit);
+    Fixture::document += "\n#";
+    Fixture::document.append(legacy_config_limit - Fixture::document.size() - 1, ' ');
+    Fixture::document += '\n';
     assert(Config::Controller::instance().reload());
-    for (const auto& slot : slots) {
-        assert(printer_type.set(slot.type, persist));
-        assert(set_m3_image_scale(slot.scale, persist));
-        assert(set_m3_left_margin_dots(slot.margin, persist));
+    for (const auto& mode : modes) {
+        assert(print_protocol.set(mode.protocol, persist));
+        assert(print_direction.set(mode.direction, persist));
+        for (const auto& slot : slots) {
+            assert(printer_type.set(slot.type, persist));
+            assert(set_m3_image_scale(slot.scale, persist));
+            assert(set_m3_left_margin_dots(slot.margin + mode.offset, persist));
+        }
     }
+    assert(Fixture::document.find("[m3.left_margin_dots.escpos]\n37mm_1x = 1") != std::string::npos);
+    assert(Fixture::document.find("[m3.left_margin_dots.tspl_dir0]\n37mm_1x = 101") != std::string::npos);
+    assert(Fixture::document.find("[m3.left_margin_dots.tspl_dir1]\n37mm_1x = 201") != std::string::npos);
     assert(Config::Controller::instance().reload());
-    for (const auto& slot : slots) {
-        assert(printer_type.set(slot.type, runtime));
-        assert(set_m3_image_scale(slot.scale, runtime));
-        assert(current_m3_config().resolved_advance().left_margin_dots == slot.margin);
+    for (const auto& mode : modes) {
+        assert(print_protocol.set(mode.protocol, runtime));
+        assert(print_direction.set(mode.direction, runtime));
+        for (const auto& slot : slots) {
+            assert(printer_type.set(slot.type, runtime));
+            assert(set_m3_image_scale(slot.scale, runtime));
+            assert(current_m3_config().resolved_advance().left_margin_dots == slot.margin + mode.offset);
+        }
     }
+    auto* escpos_margin = find_m3_left_margin_var(PrinterType::Mm58, Config::SCALE_2X, PrintProtocol::EscPos, 0);
+    assert(escpos_margin != nullptr);
+    assert(escpos_margin == find_m3_left_margin_var(PrinterType::Mm58, Config::SCALE_2X, PrintProtocol::EscPos, 1));
+    assert(!escpos_margin->set(Config::AUTO_LEFT_MARGIN, persist));
+    assert(find_m3_left_margin_var(PrinterType::Mm58, Config::SCALE_2X, PrintProtocol::Tspl, 2) == nullptr);
+    assert(find_m3_left_margin_var(PrinterType::Mm37, Config::SCALE_2X, PrintProtocol::Tspl, 0) == nullptr);
 }
 
 void test_default_left_margins() {

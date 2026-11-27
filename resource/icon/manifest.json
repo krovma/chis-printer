@@ -219,6 +219,15 @@
       "placeholder": false
     },
     {
+      "id": "charging",
+      "size": [
+        16,
+        16
+      ],
+      "path": "icon_charging_16.png",
+      "placeholder": false
+    },
+    {
       "id": "low",
       "size": [
         64,

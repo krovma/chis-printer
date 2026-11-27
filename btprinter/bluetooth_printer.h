@@ -49,7 +49,8 @@ class BluetoothPrinter {
     // Consecutive GBR blocks share a print job, with optional feed between blocks.
     bool start(const uint8* image, usize size, uint8 palette,
                bool first_block, bool last_block,
-               usize before_feed_dots = 0, usize after_feed_dots = 0);
+               usize before_feed_dots = 0, usize after_feed_dots = 0,
+               uint16 roll_label_length_mm = 0);
 
     bool initialized() const { return initialized_.load(std::memory_order_acquire); }
     bool hci_ready() const { return hci_ready_.load(std::memory_order_acquire); }
@@ -79,8 +80,8 @@ class BluetoothPrinter {
     void send_next_chunk();
     bool request_can_send_now();
     void fail_connection();
-    void fail_print();
-    void fail_print_link();
+    void fail_print(const char* reason);
+    void fail_print_link(const char* reason);
     void trace(TraceKind kind, uint32 value = 0, uint32 extra = 0);
 
     struct InquiryDevice {
@@ -90,6 +91,7 @@ class BluetoothPrinter {
     };
     struct PrintBuffers {
         Config::M3AdvanceConfig advance;
+        Config::PrintProtocol protocol;
         Config::PaperType paper;
         Config::CenteringMode centering;
         uint16 media_width_mm;

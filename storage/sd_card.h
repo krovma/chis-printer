@@ -5,7 +5,12 @@
 
 #include <string_view>
 
+#include "types.h"
+
 namespace Storage {
+
+// Leave room for all per-mode left margins in an existing 4 KiB config.
+inline constexpr usize MAX_CONFIG_BYTES = 5 * 1024;
 
 // Requires the active-low card-detect GPIO to have been initialized.
 bool mount_initialized_card();
